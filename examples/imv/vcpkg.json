@@ -1,0 +1,16 @@
+{
+  "name": "imv",
+  "version": "0.1.0",
+  "description": "Demo player for the imvideo library",
+  "dependencies": [
+    "imvideo",
+    {
+      "name": "imgui",
+      "features": ["glfw-binding", "opengl3-binding", "docking-experimental"]
+    },
+    "glfw3"
+  ],
+  "vcpkg-configuration": {
+    "overlay-ports": [ "./overlay" ]
+  }
+}

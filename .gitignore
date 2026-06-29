@@ -1,0 +1,31 @@
+# ---- Build outputs ----
+build/
+
+# ---- Dependency management ----
+vcpkg_installed/
+vcpkg-manifest-install.log
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Dear ImGui ----
+imgui.ini
+
+# ---- OpenCode deepwork state ----
+.slim/deepwork/
+
+# ---- Compiled artifacts ----
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
