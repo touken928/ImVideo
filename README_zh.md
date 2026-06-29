@@ -79,12 +79,6 @@ cmake --build --preset default
 | `Image(player, size)` | 将当前帧绘制为静态图片 |
 | `Video(player, size)` | 绘制完整视频控件（画面 + 控制栏） |
 
-## ⚠ 重要：OpenGL 上下文要求
-
-`Update()` 和 `Player` 析构函数**需要有当前 OpenGL 上下文**。
-必须从拥有 GL 上下文的同一线程调用（通常是主渲染/UI 线程）。
-库不会自行创建或管理 GL 上下文。
-
 ## 项目结构
 
 ```
@@ -111,4 +105,4 @@ cmake --build --preset default
 
 ## 协议
 
-MIT
+Apache-2.0

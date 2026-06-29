@@ -81,12 +81,6 @@ All symbols in `imvideo` namespace.
 | `Image(player, size)` | Draw the current frame as a static image. |
 | `Video(player, size)` | Draw a full video widget (image + controls). |
 
-## ⚠ Important: OpenGL context requirement
-
-`Update()` and the `Player` destructor **require a current OpenGL context**.
-Call them from the same thread that owns the GL context (the render/UI thread).
-The library does not create or manage GL contexts.
-
 ## Project layout
 
 ```
@@ -113,4 +107,4 @@ The library does not create or manage GL contexts.
 
 ## License
 
-MIT
+Apache-2.0
