@@ -1,4 +1,4 @@
-# imvideo
+<h1 align="center">ImVideo</h1>
 
 **跨平台 Dear ImGui 视频播放器扩展库。**  
 FFmpeg 解码 + miniaudio 输出 + OpenGL 纹理上传。

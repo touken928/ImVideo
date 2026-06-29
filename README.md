@@ -1,4 +1,4 @@
-# imvideo
+<h1 align="center">ImVideo</h1>
 
 **A Dear ImGui video playback extension library.**  
 FFmpeg decode + miniaudio output + OpenGL texture upload.
