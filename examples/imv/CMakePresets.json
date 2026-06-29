@@ -11,29 +11,12 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       }
-    },
-    {
-      "name": "from-github",
-      "displayName": "From GitHub",
-      "description": "Build using the root-level overlay port at ../../ports/ (vcpkg_from_github)",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/github",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_MANIFEST_DIR": "${sourceDir}",
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/../../ports"
-      }
     }
   ],
   "buildPresets": [
     {
       "name": "default",
       "configurePreset": "default"
-    },
-    {
-      "name": "from-github",
-      "configurePreset": "from-github"
     }
   ]
 }
