@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Cross-platform video player library for Dear ImGui",
   "homepage": "https://github.com/touken928/imvideo",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": [
     {
       "name": "ffmpeg",
