@@ -18,8 +18,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ---- Find dependencies ---------------------------------------------------
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
 find_package(FFMPEG REQUIRED COMPONENTS avcodec avformat avutil swscale swresample)
 find_package(imgui CONFIG REQUIRED)
 find_package(OpenGL REQUIRED)

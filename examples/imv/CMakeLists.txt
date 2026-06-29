@@ -18,6 +18,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     )
 
     # Find all required packages (vcpkg provides them)
+    # imvideo's exported targets reference FFMPEG::* targets, so find FFMPEG first
+    find_package(FFMPEG REQUIRED COMPONENTS avcodec avformat avutil swscale swresample)
     find_package(imvideo CONFIG REQUIRED)
     find_package(imgui  CONFIG REQUIRED)
     find_package(glfw3  CONFIG REQUIRED)

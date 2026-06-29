@@ -2,6 +2,29 @@
 
 include(CMakeFindDependencyMacro)
 
+# Dear ImGui
 find_dependency(imgui CONFIG REQUIRED)
+
+# OpenGL
+find_dependency(OpenGL REQUIRED)
+
+# FFmpeg — vcpkg's FindFFMPEG sets FFMPEG_lib<comp>_LIBRARY_RELEASE/DEBUG
+# (variable-style).  Create imported targets so that imvideoTargets.cmake
+# can reference FFMPEG::avcodec etc.
+if(NOT TARGET FFMPEG::avcodec)
+    find_dependency(FFMPEG REQUIRED COMPONENTS avcodec avformat avutil swscale swresample)
+    if(FFMPEG_FOUND)
+        foreach(_comp avcodec avformat avutil swscale swresample)
+            if(DEFINED FFMPEG_lib${_comp}_LIBRARY_RELEASE)
+                add_library(FFMPEG::${_comp} UNKNOWN IMPORTED)
+                set_target_properties(FFMPEG::${_comp} PROPERTIES
+                    IMPORTED_LOCATION_RELEASE "${FFMPEG_lib${_comp}_LIBRARY_RELEASE}"
+                    IMPORTED_LOCATION_DEBUG   "${FFMPEG_lib${_comp}_LIBRARY_DEBUG}"
+                    INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_lib${_comp}_INCLUDE_DIRS}"
+                )
+            endif()
+        endforeach()
+    endif()
+endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/imvideoTargets.cmake")
