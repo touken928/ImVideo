@@ -3,37 +3,7 @@
 **跨平台 Dear ImGui 视频播放器扩展库。**  
 FFmpeg 解码 + miniaudio 输出 + OpenGL 纹理上传。
 
-## 作为库引入（vcpkg）
-
-在项目的 `vcpkg.json` 中添加 `imvideo` 依赖，并通过 overlay port
-指向克隆仓库中的 `ports/` 目录：
-
-```json
-{
-  "dependencies": ["imvideo"],
-  "vcpkg-configuration": {
-    "overlay-ports": [ "./path/to/imvideo/ports" ]
-  }
-}
-```
-
-然后在 CMake 中 `find_package` 并链接：
-
-```cmake
-find_package(imvideo CONFIG REQUIRED)
-target_link_libraries(my_app PRIVATE imvideo::imvideo)
-```
-
-**从 GitHub 快速开始：**
-
-```bash
-git clone https://github.com/touken928/imvideo.git
-```
-
-将 `"overlay-ports": [ "./imvideo/ports" ]` 加入你的 `vcpkg-configuration`
-（或 `vcpkg.json`）即可。
-
-### 最小使用示例
+## 库概览
 
 ```cpp
 #include <imvideo/imvideo.h>
@@ -54,16 +24,27 @@ imvideo::Video(player);    // 完整控件：画面 + 时间轴 + 按钮
 imvideo::Image(player, ImVec2(640, 360));  // 仅画面
 ```
 
-## 构建示例（IMV）
+## 如何引入（通过 vcpkg overlay）
 
-`examples/imv/` 是一个独立的 CMake + vcpkg 项目，用于演示库的功能：
+本项目不提供预制的 vcpkg port，而是通过
+[`examples/imv/`](examples/imv/) 展示推荐的使用方式 ——
+**vcpkg overlay port** 是在本地项目中使用自定义库的标准做法。
+
+`examples/imv/` 中内置了两种 overlay port 示例：
+
+| 目录 | portfile 类型 | 预设 |
+|------|--------------|------|
+| `overlay/imvideo/` | 本地源码路径 | `cmake --preset default` |
+| `overlay-github/imvideo/` | `vcpkg_from_github(touken928/imvideo)` | `cmake --preset from-github` |
+
+直接参考这些文件来为自己的项目编写 overlay port。
+
+### 快速体验演示
 
 ```bash
 cd examples/imv
-
 cmake --preset default
 cmake --build --preset default
-
 ./build/default/imv /path/to/video.mp4
 ```
 
@@ -81,11 +62,11 @@ cmake --build --preset default
 | `Pause()` | 暂停在当前位置 |
 | `Stop()` | 停止并回到开头 |
 | `Seek(s)` | 跳转到 `s` 秒处 |
-| `Position()` | 当前播放位置（秒），由墙钟驱动 |
+| `Position()` | 当前播放位置（秒），墙钟驱动 |
 | `Duration()` | 总时长（秒），未知时返回 0 |
 | `IsPlaying()` | 是否正在播放 |
 | `SetVolume(v)` | 音量 0–1 |
-| `SetSpeed(s)` | 播放速度（≥ 0.0625），有音频时锁定为 1.0 |
+| `SetSpeed(s)` | 播放速度（≥ 0.0625），有音频时锁定 1.0 |
 | `Update()` | **每帧必须在有 GL 上下文的线程中调用** |
 | `Texture()` | 当前帧的 `ImTextureID` |
 | `VideoSize()` | 视频原始分辨率 |
@@ -108,12 +89,13 @@ cmake --build --preset default
 
 ```
 ├── CMakeLists.txt              # 库构建
-├── vcpkg.json                  # 库依赖（ffmpeg, imgui, miniaudio）
-├── ports/imvideo/              # vcpkg overlay port（供消费者使用）
-├── cmake/                      # CMake 辅助模块
 ├── include/imvideo/imvideo.h   # 公共 API（单头文件）
 ├── src/                        # 库实现
-└── examples/imv/               # 独立演示（自带 vcpkg + CMake）
+└── examples/imv/               # 独立演示 + vcpkg overlay 参考
+    ├── overlay/imvideo/        # 本地路径 overlay port
+    ├── overlay-github/imvideo/ # 基于 GitHub 的 overlay port
+    ├── CMakePresets.json       # 两个预设：default & from-github
+    └── ...
 ```
 
 ## 依赖项

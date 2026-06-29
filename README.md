@@ -3,37 +3,7 @@
 **A Dear ImGui video playback extension library.**  
 FFmpeg decode + miniaudio output + OpenGL texture upload.
 
-## Use as a library (via vcpkg)
-
-Add `imvideo` to your project's `vcpkg.json` and point the overlay port to the
-cloned repository:
-
-```json
-{
-  "dependencies": ["imvideo"],
-  "vcpkg-configuration": {
-    "overlay-ports": [ "./path/to/imvideo/ports" ]
-  }
-}
-```
-
-Then `find_package(imvideo CONFIG REQUIRED)` and link `imvideo::imvideo`:
-
-```cmake
-find_package(imvideo CONFIG REQUIRED)
-target_link_libraries(my_app PRIVATE imvideo::imvideo)
-```
-
-**Quick start via GitHub:**
-
-```bash
-git clone https://github.com/touken928/imvideo.git
-```
-
-Then add `"overlay-ports": [ "./imvideo/ports" ]` to your project's
-`vcpkg-configuration` (or `vcpkg.json`).
-
-### Minimal usage
+## Library overview
 
 ```cpp
 #include <imvideo/imvideo.h>
@@ -54,17 +24,29 @@ imvideo::Video(player);   // full widget: image + timeline + buttons
 imvideo::Image(player, ImVec2(640, 360));  // frame only
 ```
 
-## Build the demo (IMV)
+## How to consume (via vcpkg overlay)
 
-`examples/imv/` is a standalone CMake + vcpkg project that demonstrates the
-library. Build it independently:
+This repository does **not** provide a pre-built vcpkg port. Instead, refer to
+[`examples/imv/`](examples/imv/) which is a complete standalone CMake project
+that consumes `imvideo` via a **vcpkg overlay port** — the recommended way to
+use local/custom libraries in vcpkg.
+
+Inside `examples/imv/` you will find two overlay port examples:
+
+| Directory | Portfile type | Preset |
+|-----------|---------------|--------|
+| `overlay/imvideo/` | Local source path | `cmake --preset default` |
+| `overlay-github/imvideo/` | `vcpkg_from_github(touken928/imvideo)` | `cmake --preset from-github` |
+
+Study these files to learn the overlay port pattern and adapt it to your own
+project.
+
+### Quick demo
 
 ```bash
 cd examples/imv
-
 cmake --preset default
 cmake --build --preset default
-
 ./build/default/imv /path/to/video.mp4
 ```
 
@@ -109,12 +91,13 @@ The library does not create or manage GL contexts.
 
 ```
 ├── CMakeLists.txt              # Library build
-├── vcpkg.json                  # Library dependencies (ffmpeg, imgui, miniaudio)
-├── ports/imvideo/              # vcpkg overlay port (for consumers)
-├── cmake/                      # CMake helpers
 ├── include/imvideo/imvideo.h   # Public API (single header)
 ├── src/                        # Library implementation
-└── examples/imv/               # Standalone demo (own vcpkg + CMake)
+└── examples/imv/               # Standalone demo + vcpkg overlay reference
+    ├── overlay/imvideo/        # Local path overlay port
+    ├── overlay-github/imvideo/ # GitHub-based overlay port
+    ├── CMakePresets.json       # Two presets: default & from-github
+    └── ...
 ```
 
 ## Dependencies
