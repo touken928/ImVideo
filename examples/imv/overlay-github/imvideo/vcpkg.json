@@ -1,0 +1,15 @@
+{
+  "name": "imvideo",
+  "version": "0.1.0",
+  "description": "Cross-platform video player library for Dear ImGui",
+  "homepage": "https://github.com/touken928/imvideo",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "features": ["avcodec", "avformat", "swscale", "swresample"]
+    },
+    "imgui",
+    "miniaudio"
+  ],
+  "license": "MIT"
+}

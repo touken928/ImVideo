@@ -3,13 +3,25 @@
   "configurePresets": [
     {
       "name": "default",
-      "displayName": "Default (local source)",
-      "description": "Build using the local overlay port at ./overlay/ (source from parent tree)",
+      "displayName": "Local source",
+      "description": "Build using ./overlay/ (local path portfile via ../../../../)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/default",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "from-github",
+      "displayName": "From GitHub",
+      "description": "Build using ./overlay-github/ (vcpkg_from_github touken928/imvideo)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/github",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/overlay-github"
       }
     }
   ],
@@ -17,6 +29,10 @@
     {
       "name": "default",
       "configurePreset": "default"
+    },
+    {
+      "name": "from-github",
+      "configurePreset": "from-github"
     }
   ]
 }
