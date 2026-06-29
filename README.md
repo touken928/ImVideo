@@ -206,4 +206,3 @@ touch OpenGL.
 
 - **v0.1** — Multi-threaded decode, audio playback via miniaudio, stable wall-clock
   playback timing, bounded queues, speed locked when audio active, EOS handling.
-- **v0.1** — Single-threaded video-only prototype.
