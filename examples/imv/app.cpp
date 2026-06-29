@@ -1,7 +1,7 @@
 #include "app.hpp"
-#include "file_dialog.hpp"
 
 #include <imgui.h>
+#include <tinyfiledialogs.h>
 
 #include <cmath>
 #include <cstdio>
@@ -85,9 +85,12 @@ void App::Toolbar() {
     if (!ImGui::BeginMenuBar()) return;
 
     if (ImGui::MenuItem("  Open...  ", "Cmd+O")) {
-        std::vector<std::string> paths;
-        if (imv::OpenVideoFiles(paths) && !paths.empty())
-            OpenFile(paths[0]);
+        const char* filter[] = { "*.mp4", "*.mkv", "*.avi", "*.mov",
+                                 "*.webm", "*.wmv", "*.flv", "*.m4v" };
+        const char* path = tinyfd_openFileDialog("Open Video File", "", 8,
+                                                 filter, "Video Files", 0);
+        if (path)
+            OpenFile(path);
     }
 
     ImGui::SameLine();

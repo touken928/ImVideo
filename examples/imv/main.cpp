@@ -11,7 +11,6 @@
 #include <imgui_impl_opengl3.h>
 
 #include "app.hpp"
-#include "file_dialog.hpp"
 
 #include <cstdio>
 #include <string>

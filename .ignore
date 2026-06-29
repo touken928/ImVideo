@@ -1,3 +1,0 @@
-# OpenCode deepwork files are gitignored but kept readable for the tool.
-!.slim/deepwork/
-!.slim/deepwork/**

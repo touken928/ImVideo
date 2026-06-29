@@ -18,6 +18,7 @@ Thumbs.db
 imgui.ini
 
 # ---- OpenCode deepwork state ----
+.ignore
 .slim/deepwork/
 
 # ---- Compiled artifacts ----

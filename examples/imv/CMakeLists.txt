@@ -23,6 +23,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     find_package(imvideo CONFIG REQUIRED)
     find_package(imgui  CONFIG REQUIRED)
     find_package(glfw3  CONFIG REQUIRED)
+    find_package(tinyfiledialogs CONFIG REQUIRED)
     find_package(OpenGL REQUIRED)
 endif()
 
@@ -39,14 +40,13 @@ target_link_libraries(imv PRIVATE
     imvideo::imvideo
     imgui::imgui
     glfw
+    tinyfiledialogs::tinyfiledialogs
     OpenGL::GL
 )
 
-# Platform-specific file dialog + system frameworks
+# Platform-specific system frameworks
 if(APPLE)
-    target_sources(imv PRIVATE file_dialog_mac.mm)
     target_link_libraries(imv PRIVATE
-        "-framework AppKit"
         "-framework CoreVideo"
         "-framework VideoToolbox"
         "-framework CoreMedia"
@@ -54,8 +54,4 @@ if(APPLE)
         "-framework AudioToolbox"
         "-framework CoreFoundation"
     )
-elseif(WIN32)
-    target_sources(imv PRIVATE file_dialog_win.cpp)
-elseif(UNIX)
-    target_sources(imv PRIVATE file_dialog_linux.cpp)
 endif()
