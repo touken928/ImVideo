@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20)
 # Project
 # ---------------------------------------------------------------------------
 project(imvideo VERSION 0.1.0
-    DESCRIPTION "Cross-platform video player for Dear ImGui"
+    DESCRIPTION "A Dear ImGui video playback extension library (FFmpeg + miniaudio + OpenGL)"
     LANGUAGES CXX C
 )
 
@@ -17,24 +17,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# ---- Options -------------------------------------------------------------
-option(IMVIDEO_BUILD_DEMO "Build the imv demo application" ON)
-
 # ---- Find dependencies ---------------------------------------------------
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# FFmpeg  (variable-style usage as required)
 find_package(FFMPEG REQUIRED COMPONENTS avcodec avformat avutil swscale swresample)
-
-# ImGui  (config-mode, installed via vcpkg)
 find_package(imgui CONFIG REQUIRED)
-
-# OpenGL
 find_package(OpenGL REQUIRED)
 
-if(IMVIDEO_BUILD_DEMO)
-    find_package(glfw3 CONFIG REQUIRED)
-endif()
+# miniaudio is header-only
+find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h)
 
 # ---- Library -------------------------------------------------------------
 add_library(imvideo)
@@ -47,9 +38,6 @@ target_sources(imvideo PRIVATE
     src/audio_engine.cpp
 )
 
-# miniaudio is header-only
-find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h)
-
 target_include_directories(imvideo
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -57,19 +45,19 @@ target_include_directories(imvideo
     PRIVATE
         ${FFMPEG_INCLUDE_DIRS}
         ${MINIAUDIO_INCLUDE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/src    # for private headers if any
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_link_libraries(imvideo
     PUBLIC
-        imgui::imgui                       # public header includes <imgui.h>
+        imgui::imgui
     PRIVATE
         FFMPEG::avcodec
         FFMPEG::avformat
         FFMPEG::avutil
         FFMPEG::swscale
         FFMPEG::swresample
-        OpenGL::GL                         # private: texture upload
+        OpenGL::GL
 )
 
 if(APPLE)
@@ -83,7 +71,6 @@ if(APPLE)
     )
 endif()
 
-# Alias for consumer find_package
 add_library(imvideo::imvideo ALIAS imvideo)
 
 # ---- Compile definitions -------------------------------------------------
@@ -92,7 +79,6 @@ target_compile_definitions(imvideo PRIVATE
 )
 
 # ---- Install -------------------------------------------------------------
-
 set(IMVIDEO_HEADERS
     include/imvideo/imvideo.h
 )
@@ -131,8 +117,3 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/imvideoConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/imvideo
 )
-
-# ---- Demo ----------------------------------------------------------------
-if(IMVIDEO_BUILD_DEMO)
-    add_subdirectory(examples/imv)
-endif()

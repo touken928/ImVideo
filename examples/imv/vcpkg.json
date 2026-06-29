@@ -11,6 +11,6 @@
     "glfw3"
   ],
   "vcpkg-configuration": {
-    "overlay-ports": [ "./overlay" ]
+    "overlay-ports": [ "../../ports" ]
   }
 }
