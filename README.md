@@ -1,7 +1,29 @@
-<h1 align="center">ImVideo</h1>
+<p align="center">
+  <h1 align="center">ImVideo</h1>
+</p>
 
-**A Dear ImGui video playback extension library.**  
-FFmpeg decode + miniaudio output + OpenGL texture upload.
+<p align="center">
+  <strong>A Dear ImGui video playback extension library with FFmpeg decoding, miniaudio output, and OpenGL texture upload — cross-platform, single header, static linking friendly.</strong>
+</p>
+
+<p align="center">
+  <a href="README_zh.md">中文说明</a>
+</p>
+
+<p align="center">
+  <a href="https://en.cppreference.com/w/cpp/20"><img src="https://img.shields.io/badge/c++-20-blue.svg?style=for-the-badge&logo=c%2B%2B" alt="C++20"></a>
+  <a href="https://cmake.org/"><img src="https://img.shields.io/badge/cmake-3.20+-064F8C.svg?style=for-the-badge&logo=cmake" alt="CMake 3.20+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge" alt="Apache-2.0"></a>
+</p>
+
+## Features
+
+- **FFmpeg backend** — demux, decode, and scale via avcodec / avformat / swscale / swresample
+- **miniaudio** — low-latency audio output with PCM ring buffer
+- **OpenGL texture** — uploads frames directly to an OpenGL texture for ImGui rendering
+- **Single header** — `#include <imvideo/imvideo.h>` is all you need
+- **Static linking** — vcpkg builds produce self-contained static libraries
+- **Cross-platform** — macOS arm64 + Windows x86-64 (MinGW cross-compile)
 
 ## Library overview
 

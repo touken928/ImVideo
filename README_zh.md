@@ -1,7 +1,29 @@
-<h1 align="center">ImVideo</h1>
+<p align="center">
+  <h1 align="center">ImVideo</h1>
+</p>
 
-**跨平台 Dear ImGui 视频播放器扩展库。**  
-FFmpeg 解码 + miniaudio 输出 + OpenGL 纹理上传。
+<p align="center">
+  <strong>跨平台 Dear ImGui 视频播放器扩展库：FFmpeg 解码、miniaudio 音频输出、OpenGL 纹理上传——单头文件、静态链接友好。</strong>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a>
+</p>
+
+<p align="center">
+  <a href="https://en.cppreference.com/w/cpp/20"><img src="https://img.shields.io/badge/c++-20-blue.svg?style=for-the-badge&logo=c%2B%2B" alt="C++20"></a>
+  <a href="https://cmake.org/"><img src="https://img.shields.io/badge/cmake-3.20+-064F8C.svg?style=for-the-badge&logo=cmake" alt="CMake 3.20+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge" alt="Apache-2.0"></a>
+</p>
+
+## 特性
+
+- **FFmpeg 后端** — 基于 avcodec / avformat / swscale / swresample 的解封装、解码、缩放
+- **miniaudio** — 低延迟 PCM 环形缓冲音频输出
+- **OpenGL 纹理** — 帧数据直接上传为 OpenGL 纹理，无缝嵌入 ImGui
+- **单头文件** — `#include <imvideo/imvideo.h>` 即可使用
+- **静态链接** — vcpkg 构建产物为自包含的静态库
+- **跨平台** — macOS arm64 + Windows x86-64（MinGW 交叉编译）
 
 ## 库概览
 
