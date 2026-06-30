@@ -16,6 +16,13 @@ if(_VCPKG_FFMPEG)
 endif()
 
 if(FFMPEG_FOUND AND NOT TARGET FFMPEG::avcodec)
+    # Collect system-library dependencies that FFmpeg needs at link time.
+    # The vcpkg FindFFMPEG stores resolved paths in FFMPEG_DEPS_LIBRARY_RELEASE.
+    set(_ffmpeg_system_deps "")
+    if(DEFINED FFMPEG_DEPS_LIBRARY_RELEASE)
+        list(APPEND _ffmpeg_system_deps ${FFMPEG_DEPS_LIBRARY_RELEASE})
+    endif()
+
     foreach(_comp avcodec avformat avutil swscale swresample)
         if(DEFINED FFMPEG_lib${_comp}_LIBRARY_RELEASE)
             add_library(FFMPEG::${_comp} UNKNOWN IMPORTED)
@@ -23,6 +30,7 @@ if(FFMPEG_FOUND AND NOT TARGET FFMPEG::avcodec)
                 IMPORTED_LOCATION_RELEASE "${FFMPEG_lib${_comp}_LIBRARY_RELEASE}"
                 IMPORTED_LOCATION_DEBUG   "${FFMPEG_lib${_comp}_LIBRARY_DEBUG}"
                 INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_lib${_comp}_INCLUDE_DIRS}"
+                INTERFACE_LINK_LIBRARIES "${_ffmpeg_system_deps}"
             )
         endif()
     endforeach()

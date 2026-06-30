@@ -1,9 +1,14 @@
 {
-  "name": "imv",
+  "name": "implayer",
   "version": "0.1.0",
-  "description": "Demo player for the imvideo library",
+  "description": "ImPlayer — demo player for the imvideo library",
   "dependencies": [
     "imvideo",
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": ["avcodec", "avformat", "swscale", "swresample"]
+    },
     {
       "name": "imgui",
       "features": ["glfw-binding", "opengl3-binding", "docking-experimental"]

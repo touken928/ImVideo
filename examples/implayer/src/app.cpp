@@ -8,7 +8,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace imv {
+namespace implayer {
 
 // ========================================================================
 // Construction
@@ -52,7 +52,7 @@ void App::OnFrame() {
                            | ImGuiWindowFlags_NoBringToFrontOnFocus
                            | ImGuiWindowFlags_NoNavFocus;
 
-    ImGui::Begin("imv", nullptr, flags);
+    ImGui::Begin("ImPlayer", nullptr, flags);
     ImGui::PopStyleVar(2);
 
     Toolbar();
@@ -210,13 +210,13 @@ void App::EmptyState() {
 
 void App::AboutDialog() {
     ImGui::SetNextWindowSize(ImVec2(400, 240), ImGuiCond_Once);
-    if (!ImGui::Begin("About imv", &show_about_,
+    if (!ImGui::Begin("About ImPlayer", &show_about_,
                       ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return;
     }
 
-    ImGui::TextUnformatted("imv  —  imvideo Demo Player");
+    ImGui::TextUnformatted("ImPlayer  —  imvideo Demo Player");
     ImGui::Separator();
     ImGui::TextUnformatted("Version 0.1.0");
     ImGui::BulletText("imvideo  —  Dear ImGui video playback library");
@@ -229,4 +229,4 @@ void App::AboutDialog() {
     ImGui::End();
 }
 
-} // namespace imv
+} // namespace implayer

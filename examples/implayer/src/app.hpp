@@ -4,12 +4,12 @@
 
 #include <string>
 
-namespace imv {
+namespace implayer {
 
 // -----------------------------------------------------------------------
-// App  —  owns player state and renders the full imv UI.
+// App  —  owns player state and renders the full ImPlayer UI.
 // Layout:
-//   Top:    native ImGui menu bar (Open..., About)
+//   Top:    native ImGui menu bar (Open…, About)
 //   Center: video viewport (auto-scale, centered)
 //   Bottom: transport controls, seek bar, volume, time
 // -----------------------------------------------------------------------
@@ -43,4 +43,4 @@ private:
     float volume_     = 1.0f;
 };
 
-} // namespace imv
+} // namespace implayer

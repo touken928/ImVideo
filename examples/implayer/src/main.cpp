@@ -1,5 +1,5 @@
 // -----------------------------------------------------------------------
-// imv  —  Single-video player demo built on imvideo
+// ImPlayer  —  single-video player demo built on imvideo
 //
 // Entry point: init GLFW, ImGui, create App, run main loop.
 // UI logic is in app.hpp / app.cpp.
@@ -21,7 +21,7 @@ static void glfw_error_callback(int error, const char* desc) {
     fprintf(stderr, "[GLFW] Error %d: %s\n", error, desc);
 }
 
-static imv::App* g_app = nullptr;
+static implayer::App* g_app = nullptr;
 static void drop_callback(GLFWwindow*, int count, const char** paths) {
     if (!g_app || count == 0) return;
     g_app->OpenFile(paths[0]);
@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
 #endif
 
     GLFWwindow* window = glfwCreateWindow(1280, 800,
-                                          "imv — imvideo player",
+                                          "ImPlayer",
                                           nullptr, nullptr);
     if (!window) {
         fprintf(stderr, "Failed to create GLFW window\n");
@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_Init("#version 330");
 
     // ---- Application state ----------------------------------------------
-    imv::App app;
+    implayer::App app;
     g_app = &app;
 
     // Load file from command line

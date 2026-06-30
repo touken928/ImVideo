@@ -1,0 +1,53 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "macos",
+      "displayName": "macOS arm64 (debug)",
+      "description": "Native macOS build via vcpkg + local overlay",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/macos.cmake"
+      }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS arm64 (release)",
+      "description": "Native macOS release build",
+      "inherits": "macos",
+      "binaryDir": "${sourceDir}/build/macos-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "mingw-static",
+      "displayName": "Windows x64 MinGW (static)",
+      "description": "Cross-compile to Windows via mingw-w64 (brew install mingw-w64)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mingw-static",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/toolchains/mingw-static.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos",
+      "configurePreset": "macos"
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release"
+    },
+    {
+      "name": "mingw-static",
+      "configurePreset": "mingw-static"
+    }
+  ]
+}

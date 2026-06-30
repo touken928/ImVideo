@@ -27,25 +27,21 @@ imvideo::Image(player, ImVec2(640, 360));  // 仅画面
 ## 如何引入（通过 vcpkg overlay）
 
 本项目不提供预制的 vcpkg port，而是通过
-[`examples/imv/`](examples/imv/) 展示推荐的使用方式 ——
+[`examples/implayer/`](examples/implayer/) 展示推荐的使用方式 ——
 **vcpkg overlay port** 是在本地项目中使用自定义库的标准做法。
 
-`examples/imv/` 中内置了两种 overlay port 示例：
-
-| 目录 | portfile 类型 | 预设 |
-|------|--------------|------|
-| `overlay/imvideo/` | 本地源码路径 | `cmake --preset default` |
-| `overlay-github/imvideo/` | `vcpkg_from_github(touken928/imvideo)` | `cmake --preset from-github` |
-
-直接参考这些文件来为自己的项目编写 overlay port。
+`examples/implayer/` 中内置了 overlay port 示例 `overlay/imvideo/`，直接指向本地
+源码目录。如需从 GitHub 拉取，将 portfile 中的 `SOURCE_PATH` 替换为
+`vcpkg_from_github(touken928/imvideo …)` 并相应调整 `vcpkg.json` 引用即可，
+无需其他配置。直接参考这些文件来为自己的项目编写 overlay port。
 
 ### 快速体验演示
 
 ```bash
-cd examples/imv
-cmake --preset default
-cmake --build --preset default
-./build/default/imv /path/to/video.mp4
+cd examples/implayer
+cmake --preset macos
+cmake --build --preset macos
+./build/macos/ImPlayer /path/to/video.mp4
 ```
 
 ## 公共 API
@@ -85,11 +81,11 @@ cmake --build --preset default
 ├── CMakeLists.txt              # 库构建
 ├── include/imvideo/imvideo.h   # 公共 API（单头文件）
 ├── src/                        # 库实现
-└── examples/imv/               # 独立演示 + vcpkg overlay 参考
+└── examples/implayer/          # 独立演示 + vcpkg overlay 参考
+    ├── src/                    # 演示源码（main, app）
     ├── overlay/imvideo/        # 本地路径 overlay port
-    ├── overlay-github/imvideo/ # 基于 GitHub 的 overlay port
-    ├── CMakePresets.json       # 两个预设：default & from-github
-    └── ...
+    ├── CMakePresets.json       # macos / macos-release / mingw-static
+    └── toolchains/             # 平台工具链与链接配置
 ```
 
 ## 依赖项

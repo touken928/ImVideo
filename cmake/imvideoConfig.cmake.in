@@ -12,6 +12,9 @@ find_dependency(OpenGL REQUIRED)
 # (variable-style).  Create imported targets so that imvideoTargets.cmake
 # can reference FFMPEG::avcodec etc.
 if(NOT TARGET FFMPEG::avcodec)
+    # Force re-evaluation so FFMPEG_DEPS_LIBRARY_RELEASE is populated
+    # (the vcpkg module caches FFMPEG_FOUND but not the deps variable).
+    set(FFMPEG_FOUND FALSE CACHE BOOL "" FORCE)
     find_dependency(FFMPEG REQUIRED COMPONENTS avcodec avformat avutil swscale swresample)
     if(FFMPEG_FOUND)
         foreach(_comp avcodec avformat avutil swscale swresample)
@@ -21,6 +24,7 @@ if(NOT TARGET FFMPEG::avcodec)
                     IMPORTED_LOCATION_RELEASE "${FFMPEG_lib${_comp}_LIBRARY_RELEASE}"
                     IMPORTED_LOCATION_DEBUG   "${FFMPEG_lib${_comp}_LIBRARY_DEBUG}"
                     INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_lib${_comp}_INCLUDE_DIRS}"
+                    INTERFACE_LINK_LIBRARIES "${FFMPEG_DEPS_LIBRARY_RELEASE}"
                 )
             endif()
         endforeach()

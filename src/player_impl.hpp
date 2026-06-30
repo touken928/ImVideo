@@ -19,6 +19,9 @@
 #if defined(__APPLE__)
 #   define GL_SILENCE_DEPRECATION
 #   include <OpenGL/gl3.h>
+#elif defined(_WIN32)
+#   include <GL/gl.h>
+#   include <GL/glext.h>   // GL_CLAMP_TO_EDGE etc. (mingw-w64)
 #else
 #   include <GL/gl.h>
 #endif
