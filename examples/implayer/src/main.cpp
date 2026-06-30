@@ -43,7 +43,6 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-#   define GL_SILENCE_DEPRECATION
 #endif
 
     GLFWwindow* window = glfwCreateWindow(1280, 800,
