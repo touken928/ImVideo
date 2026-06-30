@@ -2,7 +2,7 @@
 # MinGW x86_64 → Windows cross-compilation (static linking)
 #
 # Loaded via VCPKG_CHAINLOAD_TOOLCHAIN_FILE in CMakePresets.json.
-# Requires:  brew install mingw-w64
+# Requires:  mingw-w64 (brew install mingw-w64 / apt-get install mingw-w64)
 # ---------------------------------------------------------------------------
 
 # ---- auto-detect MinGW compiler (no hardcoded version paths) ---------------
@@ -23,7 +23,9 @@ endif()
 if(NOT _MINGW_GCC)
     message(FATAL_ERROR
         "x86_64-w64-mingw32-gcc not found.\n"
-        "Install with:  brew install mingw-w64\n"
+        "Install with:\n"
+        "  macOS:  brew install mingw-w64\n"
+        "  Linux:  sudo apt-get install mingw-w64\n"
         "Or ensure the bin directory is in PATH.")
 endif()
 
