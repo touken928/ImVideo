@@ -271,7 +271,7 @@ void App::EmptyState() {
 }
 
 // ========================================================================
-// AboutDialog  —  simple modal
+// AboutDialog  -  simple modal
 // ========================================================================
 
 void App::AboutDialog() {
@@ -282,12 +282,12 @@ void App::AboutDialog() {
         return;
     }
 
-    ImGui::TextUnformatted("ImPlayer  —  imvideo Demo Player");
+    ImGui::TextUnformatted("ImPlayer - imvideo Demo Player");
     ImGui::Separator();
     ImGui::TextUnformatted("Version 0.1.0");
-    ImGui::BulletText("imvideo  —  Dear ImGui video playback library");
-    ImGui::BulletText("FFmpeg   —  audio/video decoding");
-    ImGui::BulletText("miniaudio — audio output");
+    ImGui::BulletText("imvideo - Dear ImGui video playback library");
+    ImGui::BulletText("FFmpeg - audio/video decoding");
+    ImGui::BulletText("miniaudio - audio output");
     ImGui::BulletText("Dear ImGui + GLFW + OpenGL");
     ImGui::Dummy(ImVec2(0, 6));
     ImGui::Separator();
