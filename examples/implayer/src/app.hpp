@@ -2,6 +2,7 @@
 
 #include <imvideo/imvideo.h>
 
+#include <array>
 #include <string>
 
 namespace implayer {
@@ -24,6 +25,9 @@ public:
     /// Open a single video file (closes any previous).
     void OpenFile(const std::string& path);
 
+    /// Open a local path or supported URL.
+    void OpenSource(const std::string& source);
+
     /// Called once per frame from the main loop (GL context active).
     void OnFrame();
 
@@ -36,11 +40,14 @@ private:
     void Controls();      // bottom transport bar
     void EmptyState();    // centered placeholder when no file loaded
     void AboutDialog();   // about modal
+    void OpenUrlPopup();  // lightweight URL input popup
 
     imvideo::Player player_;
-    bool  file_open_  = false;
-    bool  show_about_ = false;
-    float volume_     = 1.0f;
+    bool  file_open_       = false;
+    bool  show_about_      = false;
+    bool  show_open_url_   = false;
+    float volume_          = 1.0f;
+    std::array<char, 1024> source_input_{};
 };
 
 } // namespace implayer

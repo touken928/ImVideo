@@ -3,6 +3,7 @@
 #include <imgui.h>
 #include <filesystem>
 #include <memory>
+#include <string_view>
 
 namespace imvideo {
 
@@ -10,10 +11,10 @@ namespace imvideo {
 // Player  — multi-threaded video/audio playback with OpenGL texture output.
 //
 //   Thread safety:
-//     - Public methods (Open, Close, Play, Pause, Stop, Seek, SetVolume,
-//       SetSpeed, Position, Duration, IsPlaying, Texture, VideoSize,
-//       LastError) are called from the same thread that owns the OpenGL
-//       context (typically the render / UI thread).
+//     - Public methods (Open, OpenUrl, Close, Play, Pause, Stop, Seek,
+//       SetVolume, SetSpeed, Position, Duration, IsPlaying, Texture,
+//       VideoSize, LastError) are called from the same thread that owns
+//       the OpenGL context (typically the render / UI thread).
 //     - Update() must be called once per frame on that thread — it
 //       consumes decoded frames from an internal queue and uploads to
 //       the OpenGL texture.
@@ -45,6 +46,8 @@ public:
 
     // ---- lifecycle -------------------------------------------------------
     bool Open(const std::filesystem::path& path);
+    bool Open(std::string_view source);   // auto-detects local path vs URL
+    bool OpenUrl(std::string_view url);   // explicit URL open, rejects unsupported schemes
     void Close();
 
     // ---- playback control ------------------------------------------------

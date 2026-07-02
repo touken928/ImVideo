@@ -75,9 +75,9 @@ int main(int argc, char** argv) {
     implayer::App app;
     g_app = &app;
 
-    // Load file from command line
+    // Load source from command line
     if (argc > 1)
-        app.OpenFile(argv[1]);
+        app.OpenSource(argv[1]);
 
     // ---- Main loop ------------------------------------------------------
     while (!glfwWindowShouldClose(window)) {

@@ -7,7 +7,7 @@
     {
       "name": "ffmpeg",
       "default-features": false,
-      "features": ["avcodec", "avformat", "swscale", "swresample"]
+      "features": ["avcodec", "avformat", "openssl", "swscale", "swresample"]
     },
     {
       "name": "imgui",

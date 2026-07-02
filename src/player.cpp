@@ -17,7 +17,85 @@
 #include <libavutil/channel_layout.h>
 #include <libavutil/rational.h>
 
+#include <string>
+#include <string_view>
 #include <thread>
+
+// -----------------------------------------------------------------------
+// Internal URL/path helpers  (anonymous namespace)
+// -----------------------------------------------------------------------
+namespace {
+
+bool starts_with(std::string_view s, std::string_view prefix) {
+    return s.size() >= prefix.size() && s.substr(0, prefix.size()) == prefix;
+}
+
+// Returns true for known URL schemes that avformat_open_input can handle
+// natively (http/https/rtsp/rtmp) plus file:// which we convert locally.
+bool is_network_url_scheme(std::string_view s) noexcept {
+    return starts_with(s, "http://")
+        || starts_with(s, "https://")
+        || starts_with(s, "rtsp://")
+        || starts_with(s, "rtmp://");
+}
+
+bool is_known_source_scheme(std::string_view s) noexcept {
+    return starts_with(s, "file://")
+        || is_network_url_scheme(s);
+}
+
+int hex_digit(char c) noexcept {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+std::string percent_decode(std::string_view s) {
+    std::string r;
+    r.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '%' && i + 2 < s.size()) {
+            int hi = hex_digit(s[i + 1]);
+            int lo = hex_digit(s[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                r.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        r.push_back(s[i]);
+    }
+    return r;
+}
+
+// Convert a file:// URL to a local filesystem path.
+//   file:///absolute/path   → /absolute/path
+//   file://localhost/path    → /path
+//   file:///path%20with%20spaces → /path with spaces
+std::string file_url_to_path(std::string_view url) {
+    auto s = url.substr(7); // after "file://"
+    // Skip optional authority (non-empty host before the path)
+    if (!s.empty() && s[0] != '/') {
+        auto slash = s.find('/');
+        std::string host = percent_decode(s.substr(0, slash));
+        if (host == "localhost") {
+            s = slash == std::string_view::npos ? std::string_view{} : s.substr(slash);
+        } else {
+#if defined(_WIN32)
+            std::string path = "//" + host;
+            if (slash != std::string_view::npos)
+                path += percent_decode(s.substr(slash));
+            return path;
+#else
+            s = slash == std::string_view::npos ? std::string_view{} : s.substr(slash);
+#endif
+        }
+    }
+    return percent_decode(s);
+}
+
+} // anonymous namespace
 
 // -----------------------------------------------------------------------
 namespace imvideo {
@@ -31,7 +109,7 @@ Player::Impl::Impl()  = default;
 Player::Impl::~Impl() noexcept { close(); }
 
 // ========================================================================
-// open
+// open  (local filesystem path)
 // ========================================================================
 
 bool Player::Impl::open(const std::filesystem::path& path) {
@@ -45,7 +123,67 @@ bool Player::Impl::open(const std::filesystem::path& path) {
     if (ret < 0) { set_av_error("avformat_open_input", ret); return false; }
     fmt_ctx_.reset(fmt);
 
-    ret = avformat_find_stream_info(fmt_ctx_.get(), nullptr);
+    if (!finish_open()) { close(); return false; }
+    return true;
+}
+
+// ========================================================================
+// open  (string_view — auto-detect local path vs URL)
+// ========================================================================
+
+bool Player::Impl::open(std::string_view source) {
+    if (source.empty()) {
+        last_error_ = "Open: source is empty";
+        return false;
+    }
+
+    if (!is_known_source_scheme(source)) {
+        // No known URL scheme — treat as local filesystem path
+        return open(std::filesystem::path(std::string(source)));
+    }
+    if (starts_with(source, "file://")) {
+        // file:// URL → convert to local path
+        return open(std::filesystem::path(file_url_to_path(source)));
+    }
+    // Network URL (http, https, rtsp, rtmp) — pass raw to avformat
+    return open_url(source);
+}
+
+// ========================================================================
+// open_url  (explicit URL open, rejects unsupported schemes)
+// ========================================================================
+
+bool Player::Impl::open_url(std::string_view url) {
+    close();
+
+    if (url.empty()) {
+        last_error_ = "OpenUrl: URL is empty";
+        return false;
+    }
+    if (!is_network_url_scheme(url)) {
+        last_error_ = std::string("OpenUrl: unsupported URL scheme in \"")
+                    + std::string(url) + "\"";
+        return false;
+    }
+
+    // Pass the raw URL string to FFmpeg's avformat_open_input, which
+    // dispatches to the appropriate URL protocol (http, rtsp, rtmp, …).
+    AVFormatContext* fmt = nullptr;
+    std::string url_str(url);
+    int ret = avformat_open_input(&fmt, url_str.c_str(), nullptr, nullptr);
+    if (ret < 0) { set_av_error("avformat_open_input", ret); return false; }
+    fmt_ctx_.reset(fmt);
+
+    if (!finish_open()) { close(); return false; }
+    return true;
+}
+
+// ========================================================================
+// finish_open  —  shared post-avformat_open_input setup
+// ========================================================================
+
+bool Player::Impl::finish_open() {
+    int ret = avformat_find_stream_info(fmt_ctx_.get(), nullptr);
     if (ret < 0) { set_av_error("avformat_find_stream_info", ret); return false; }
 
     video_stream_idx_ = av_find_best_stream(fmt_ctx_.get(), AVMEDIA_TYPE_VIDEO,
@@ -689,6 +827,8 @@ Player::Player(Player&&) noexcept = default;
 Player& Player::operator=(Player&&) noexcept = default;
 
 bool   Player::Open(const std::filesystem::path& p)  { return pimpl_->open(p); }
+bool   Player::Open(std::string_view s)              { return pimpl_->open(s); }
+bool   Player::OpenUrl(std::string_view u)           { return pimpl_->open_url(u); }
 void   Player::Close()                                { pimpl_->close(); }
 void   Player::Play()                                 { pimpl_->play(); }
 void   Player::Pause()                                { pimpl_->pause(); }

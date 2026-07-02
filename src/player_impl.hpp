@@ -102,6 +102,8 @@ public:
 
     // ---- public API (called from render thread) -------------------------
     bool   open(const std::filesystem::path& path);
+    bool   open(std::string_view source);   // auto-detect local path vs URL
+    bool   open_url(std::string_view url);  // explicit URL open
     void   close() noexcept;
     void   play();
     void   pause();
@@ -191,6 +193,11 @@ private:
 
     // ---- Internal helpers -----------------------------------------------
     void set_av_error(const char* ctx, int err);
+
+    // Shared setup after avformat_open_input (find streams, open decoders,
+    // init GL texture, audio engine, start worker).  fmt_ctx_ must already
+    // be set by the caller.
+    bool finish_open();
 
     // -- Worker thread --
     void worker_func();

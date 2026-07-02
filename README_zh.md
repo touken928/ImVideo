@@ -32,10 +32,16 @@
 
 imvideo::Player player;
 
-if (!player.Open("video.mp4")) {
+// 从本地文件路径打开：
+if (!player.Open(std::filesystem::path("video.mp4"))) {
     fprintf(stderr, "错误: %s\n", player.LastError());
     return;
 }
+// 或从网络 URL (http/https/rtsp/rtmp)：
+// player.OpenUrl("http://example.com/stream.m3u8");
+// player.Open(std::string_view{"https://example.com/video.mp4"});   // 自动识别
+// player.Open(std::string_view{"file:///home/user/video.mp4"});     // 自动识别
+
 player.Play();
 
 // 在渲染循环内（需有当前 GL 上下文）：
@@ -64,7 +70,21 @@ cd examples/implayer
 cmake --preset macos
 cmake --build --preset macos
 ./build/macos/ImPlayer /path/to/video.mp4
+# 或
+./build/macos/ImPlayer rtsp://127.0.0.1:8554/imvideo
 ```
+
+### 本地网络流测试
+
+可使用 `streamlab/Makefile` 将一个本地文件临时暴露成 `http`、`https`、
+`rtsp`、`rtmp` 地址，方便手工验证：
+
+```bash
+cd streamlab
+make all INPUT=../oceans.mp4
+```
+
+各协议目标、变量和验证方式见 `streamlab/README.md`。
 
 ## 公共 API
 
@@ -74,7 +94,9 @@ cmake --build --preset macos
 
 | 方法 | 说明 |
 |------|------|
-| `Open(path)` | 打开视频文件，失败返回 `false` |
+| `Open(path)` | 打开本地视频文件，失败返回 `false` |
+| `Open(source)` | 打开本地路径或 URL（自动识别 `file://`、`http://`、`https://`、`rtsp://`、`rtmp://`） |
+| `OpenUrl(url)` | 显式打开 URL；不支持的协议会返回清晰错误 |
 | `Close()` | 关闭并释放所有资源 |
 | `Play()` | 开始或恢复播放 |
 | `Pause()` | 暂停在当前位置 |

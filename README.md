@@ -32,10 +32,16 @@
 
 imvideo::Player player;
 
-if (!player.Open("video.mp4")) {
+// Open from local file path:
+if (!player.Open(std::filesystem::path("video.mp4"))) {
     fprintf(stderr, "Error: %s\n", player.LastError());
     return;
 }
+// Or from a network URL (http/https/rtsp/rtmp):
+// player.OpenUrl("http://example.com/stream.m3u8");
+// player.Open(std::string_view{"https://example.com/video.mp4"});  // auto-detected
+// player.Open(std::string_view{"file:///home/user/video.mp4"});    // auto-detected
+
 player.Play();
 
 // In your render loop (with a current GL context):
@@ -65,7 +71,21 @@ cd examples/implayer
 cmake --preset macos
 cmake --build --preset macos
 ./build/macos/ImPlayer /path/to/video.mp4
+# or
+./build/macos/ImPlayer rtsp://127.0.0.1:8554/imvideo
 ```
+
+### Local network stream lab
+
+Use `streamlab/Makefile` to expose one local file over temporary `http`,
+`https`, `rtsp`, and `rtmp` endpoints for manual testing:
+
+```bash
+cd streamlab
+make all INPUT=../oceans.mp4
+```
+
+See `streamlab/README.md` for per-protocol targets and variables.
 
 ## Public API
 
@@ -75,7 +95,9 @@ All symbols in `imvideo` namespace.
 
 | Method | Description |
 |--------|-------------|
-| `Open(path)` | Open a video file. Returns `false` on error. |
+| `Open(path)` | Open a local video file. Returns `false` on error. |
+| `Open(source)` | Open a local path or URL (auto-detects `file://`, `http://`, `https://`, `rtsp://`, `rtmp://`). |
+| `OpenUrl(url)` | Explicitly open a URL; rejects unsupported schemes with a clear error. |
 | `Close()` | Close and release all resources. |
 | `Play()` | Start or resume playback. |
 | `Pause()` | Pause at current position. |

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 namespace implayer {
@@ -22,10 +23,16 @@ App::~App() = default;
 // ========================================================================
 
 void App::OpenFile(const std::string& path) {
+    OpenSource(path);
+}
+
+void App::OpenSource(const std::string& source) {
     player_.Close();
-    if (player_.Open(path)) {
+    if (player_.Open(std::string_view(source))) {
         player_.Play();
         file_open_ = true;
+    } else {
+        file_open_ = false;
     }
 }
 
@@ -73,6 +80,8 @@ void App::OnFrame() {
 
     ImGui::End();
 
+    OpenUrlPopup();
+
     if (show_about_)
         AboutDialog();
 }
@@ -91,6 +100,13 @@ void App::Toolbar() {
                                                  filter, "Video Files", 0);
         if (path)
             OpenFile(path);
+    }
+
+    ImGui::SameLine();
+
+    if (ImGui::MenuItem("  Open URL...  ")) {
+        show_open_url_ = true;
+        ImGui::OpenPopup("Open URL");
     }
 
     ImGui::SameLine();
@@ -191,17 +207,67 @@ void App::Controls() {
 }
 
 // ========================================================================
+// OpenUrlPopup  —  modal URL / source input
+// ========================================================================
+
+void App::OpenUrlPopup() {
+    if (show_open_url_)
+        ImGui::OpenPopup("Open URL");
+
+    ImGui::SetNextWindowSize(ImVec2(640, 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Open URL", &show_open_url_, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextUnformatted("Open a local path, file:// URL, or network URL.");
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::SetNextItemWidth(560.0f);
+    ImGui::InputText("##source", source_input_.data(), source_input_.size());
+
+    const bool submitted = ImGui::IsItemDeactivatedAfterEdit()
+                        && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+
+    if (submitted || ImGui::Button("Open")) {
+        OpenSource(source_input_.data());
+        if (file_open_) {
+            show_open_url_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) {
+        show_open_url_ = false;
+        ImGui::CloseCurrentPopup();
+    }
+
+    const char* err = player_.LastError();
+    if (err && err[0] != '\0') {
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::TextWrapped("Error: %s", err);
+    }
+
+    ImGui::EndPopup();
+}
+
+// ========================================================================
 // EmptyState  —  centered placeholder when no video is loaded
 // ========================================================================
 
 void App::EmptyState() {
     ImVec2 avail = ImGui::GetContentRegionAvail();
-    const char* msg = "Drop a video file or use File > Open";
+    const char* msg = "Drop a video file or use Open / Open URL";
     ImVec2 ts = ImGui::CalcTextSize(msg);
+    const char* err = player_.LastError();
+    const bool has_error = err && err[0] != '\0';
+    const float block_h = ts.y + (has_error ? ImGui::GetTextLineHeightWithSpacing() * 2.0f : 0.0f);
     ImGui::SetCursorPos(ImVec2(
         (avail.x - ts.x) * 0.5f,
-        (avail.y - ts.y) * 0.5f));
+        (avail.y - block_h) * 0.5f));
     ImGui::TextDisabled("%s", msg);
+    if (has_error) {
+        ImGui::Dummy(ImVec2(0, 8));
+        ImGui::TextWrapped("Last error: %s", err);
+    }
 }
 
 // ========================================================================

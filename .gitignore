@@ -30,3 +30,6 @@ imgui.ini
 *.dylib
 *.dll
 *.exe
+
+# ---- Local media fixtures ----
+*.mp4
