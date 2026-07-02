@@ -7,13 +7,17 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a>
+  <a href="../README.md">English</a>
 </p>
 
 <p align="center">
   <a href="https://en.cppreference.com/w/cpp/20"><img src="https://img.shields.io/badge/c++-20-blue.svg?style=for-the-badge&logo=c%2B%2B" alt="C++20"></a>
   <a href="https://cmake.org/"><img src="https://img.shields.io/badge/cmake-3.20+-064F8C.svg?style=for-the-badge&logo=cmake" alt="CMake 3.20+"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge" alt="Apache-2.0"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge" alt="Apache-2.0"></a>
+</p>
+
+<p align="center">
+  <img src="images/implayer-screenshot.png" alt="ImPlayer 截图" width="900">
 </p>
 
 ## 特性
@@ -55,7 +59,7 @@ imvideo::Image(player, ImVec2(640, 360));  // 仅画面
 ## 如何引入（通过 vcpkg overlay）
 
 本项目不提供预制的 vcpkg port，而是通过
-[`examples/implayer/`](examples/implayer/) 展示推荐的使用方式 ——
+[`examples/implayer/`](../examples/implayer/) 展示推荐的使用方式 ——
 **vcpkg overlay port** 是在本地项目中使用自定义库的标准做法。
 
 `examples/implayer/` 中内置了 overlay port 示例 `overlay/imvideo/`，直接指向本地

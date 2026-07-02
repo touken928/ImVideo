@@ -7,13 +7,17 @@
 </p>
 
 <p align="center">
-  <a href="README_zh.md">中文说明</a>
+  <a href="docs/README_zh.md">中文说明</a>
 </p>
 
 <p align="center">
   <a href="https://en.cppreference.com/w/cpp/20"><img src="https://img.shields.io/badge/c++-20-blue.svg?style=for-the-badge&logo=c%2B%2B" alt="C++20"></a>
   <a href="https://cmake.org/"><img src="https://img.shields.io/badge/cmake-3.20+-064F8C.svg?style=for-the-badge&logo=cmake" alt="CMake 3.20+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg?style=for-the-badge" alt="Apache-2.0"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/implayer-screenshot.png" alt="ImPlayer screenshot" width="900">
 </p>
 
 ## Features
