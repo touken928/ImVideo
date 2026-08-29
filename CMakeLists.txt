@@ -3,7 +3,7 @@ project(imvideo VERSION 0.1.0 LANGUAGES C CXX)
 
 option(IMVIDEO_BUILD_TESTS "Build imvideo tests" OFF)
 
-find_package(FFmpeg REQUIRED COMPONENTS avformat avcodec avutil swscale swresample)
+find_package(FFmpeg REQUIRED COMPONENTS avformat avcodec avutil avfilter swscale swresample)
 find_package(OpenGL REQUIRED)
 
 add_library(imvideo
@@ -25,6 +25,7 @@ target_link_libraries(imvideo
         ffmpeg::avformat
         ffmpeg::avcodec
         ffmpeg::avutil
+        ffmpeg::avfilter
         ffmpeg::swscale
         ffmpeg::swresample
         OpenGL::GL

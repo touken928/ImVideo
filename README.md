@@ -38,7 +38,8 @@ cmake --build --preset conan-release
 ```
 
 Pass an HTTP(S) URL or RTSP URL in place of a local file. The example provides
-play/pause, seeking when supported, volume control, and automatic sizing.
+play/pause, seeking when supported, `0.5x` to `2.0x` playback controls, volume
+control, and automatic sizing.
 
 ## API sketch
 
@@ -50,6 +51,7 @@ options.autoplay = true;
 options.loop = false;
 options.audio_sink = std::make_shared<ApplicationAudioSink>();
 player.open(imvideo::Source::file("movie.mp4"), options);
+player.set_speed(1.5);
 
 if (auto frame = player.frame(); frame && renderer.update(frame)) {
     const auto texture = (ImTextureID)(intptr_t)renderer.texture();
@@ -58,6 +60,14 @@ if (auto frame = player.frame(); frame && renderer.update(frame)) {
         static_cast<float>(renderer.height())
     });
 }
+```
+
+`Source` records how the input should be opened instead of inferring that choice
+again inside `Player`. Use `file()`, `url()`, or `rtsp()` at the call site:
+
+```cpp
+player.open(imvideo::Source::url("https://example.com/movie.mp4"), options);
+player.open(imvideo::Source::rtsp("rtsp://camera/live"), options);
 ```
 
 The core package does not depend on Dear ImGui. `Renderer::texture()` returns a
@@ -70,3 +80,9 @@ implement `imvideo::AudioSink` and assign a `std::shared_ptr` to
 `audio_sink` empty for silent previews or multi-camera RTSP walls. In that mode
 no audio decoder or resampler is created. `Player` retains the sink until its
 decode thread has stopped, and `set_volume()` forwards volume to the sink.
+
+`Player::set_speed()` accepts speeds from `0.25x` through `4.0x` for
+seekable, non-live inputs. Video presentation timing is scaled and audio is
+processed through FFmpeg's `atempo` filter so pitch is preserved. RTSP and
+non-seekable/live HTTP inputs remain fixed at `1.0x`; use
+`can_set_speed()` to decide whether to expose a speed control.

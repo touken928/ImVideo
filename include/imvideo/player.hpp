@@ -34,12 +34,15 @@ public:
     void pause();
     void stop();
     bool seek(double seconds);
+    bool set_speed(double speed);
 
     [[nodiscard]] State state() const noexcept;
     [[nodiscard]] double position() const noexcept;
     [[nodiscard]] double duration() const noexcept;
     [[nodiscard]] bool seekable() const noexcept;
     [[nodiscard]] bool live() const noexcept;
+    [[nodiscard]] bool can_set_speed() const noexcept;
+    [[nodiscard]] double speed() const noexcept;
     [[nodiscard]] Frame frame() const;
     void set_volume(float volume);
     [[nodiscard]] float volume() const noexcept;

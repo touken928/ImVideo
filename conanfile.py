@@ -53,7 +53,7 @@ class ImvideoConan(ConanFile):
         if self.options.shared:
             self.options.rm_safe("fPIC")
         self.options["ffmpeg"].avdevice = False
-        self.options["ffmpeg"].avfilter = False
+        self.options["ffmpeg"].avfilter = True
         self.options["ffmpeg"].with_programs = False
 
     def layout(self):

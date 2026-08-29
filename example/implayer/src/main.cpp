@@ -9,6 +9,7 @@
 #include "miniaudio_sink.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
@@ -39,11 +40,12 @@ int main(int argc, char** argv) {
     imvideo::Player player;
     imvideo::Renderer renderer;
     auto audio_sink = std::make_shared<MiniaudioSink>();
-    const auto source = std::string_view(argv[1]).find("://") == std::string_view::npos
-                            ? imvideo::Source::file(argv[1])
-                            : (std::string_view(argv[1]).rfind("rtsp://", 0) == 0
-                                   ? imvideo::Source::rtsp(argv[1])
-                                   : imvideo::Source::url(argv[1]));
+    const auto argument = std::string_view(argv[1]);
+    const auto source = argument.rfind("rtsp://", 0) == 0
+                            ? imvideo::Source::rtsp(argv[1])
+                            : (argument.find("://") != std::string_view::npos
+                                   ? imvideo::Source::url(argv[1])
+                                   : imvideo::Source::file(argv[1]));
     imvideo::Options options;
     options.audio_sink = audio_sink;
     player.open(source, options);
@@ -56,25 +58,43 @@ int main(int argc, char** argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGui::Begin("Video");
-        if (renderer.texture() != 0) {
-            const float available = ImGui::GetContentRegionAvail().x;
-            const float aspect = renderer.height() > 0 ? static_cast<float>(renderer.width()) / renderer.height() : 1.0F;
-            const auto texture = (ImTextureID)(intptr_t)renderer.texture();
-            ImGui::Image(texture, {available, available / aspect});
-        } else if (player.state() == imvideo::State::Error) {
-            ImGui::TextWrapped("%s", player.error().data());
-        } else {
-            ImGui::TextUnformatted("Opening video...");
-        }
-        float volume = player.volume();
-        if (ImGui::SliderFloat("Volume", &volume, 0.0F, 1.0F)) player.set_volume(volume);
+
         if (ImGui::Button(player.state() == imvideo::State::Playing ? "Pause" : "Play")) {
             player.state() == imvideo::State::Playing ? player.pause() : player.play();
         }
+        ImGui::SameLine();
+        static constexpr double rates[] = {0.5, 1.0, 1.5, 2.0};
+        static constexpr const char* labels[] = {"0.5x", "1.0x", "1.5x", "2.0x"};
+        int selected = 0;
+        const double current_rate = player.speed();
+        for (int index = 1; index < 4; ++index)
+            if (std::abs(rates[index] - current_rate) < std::abs(rates[selected] - current_rate)) selected = index;
+        const bool rate_supported = player.can_set_speed();
+        ImGui::BeginDisabled(!rate_supported);
+        ImGui::SetNextItemWidth(90.0F);
+        if (ImGui::Combo("Speed", &selected, labels, 4)) player.set_speed(rates[selected]);
+        ImGui::EndDisabled();
+        if (!rate_supported && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Playback speed is unavailable for live or non-seekable input");
+
+        float volume = player.volume();
+        if (ImGui::SliderFloat("Volume", &volume, 0.0F, 1.0F)) player.set_volume(volume);
         if (player.seekable()) {
             float position = static_cast<float>(player.position());
             const float duration = static_cast<float>(player.duration());
             if (ImGui::SliderFloat("Position", &position, 0.0F, duration, "%.1f s")) player.seek(position);
+        }
+
+        if (renderer.texture() != 0) {
+            const ImVec2 available = ImGui::GetContentRegionAvail();
+            const float aspect = renderer.height() > 0 ? static_cast<float>(renderer.width()) / renderer.height() : 1.0F;
+            const float width = std::min(available.x, std::max(0.0F, available.y) * aspect);
+            const auto texture = (ImTextureID)(intptr_t)renderer.texture();
+            if (width > 0.0F) ImGui::Image(texture, {width, width / aspect});
+        } else if (player.state() == imvideo::State::Error) {
+            ImGui::TextWrapped("%s", player.error().data());
+        } else {
+            ImGui::TextUnformatted("Opening video...");
         }
         ImGui::End();
 
