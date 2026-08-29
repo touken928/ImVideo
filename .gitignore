@@ -1,0 +1,8 @@
+/build/
+/example/implayer/build/
+/example/implayer/build-ninja/
+/example/implayer/build-decoupled/
+/CMakeUserPresets.json
+/example/implayer/CMakeUserPresets.json
+.DS_Store
+imgui.ini
