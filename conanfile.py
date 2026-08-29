@@ -1,4 +1,5 @@
 from conan import ConanFile
+from conan.tools.build import can_run
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.files import copy
 import os
@@ -40,10 +41,15 @@ class ImvideoConan(ConanFile):
         "ffmpeg/*:with_soxr": False,
         "ffmpeg/*:disable_all_encoders": True,
     }
-    exports_sources = "CMakeLists.txt", "cmake/*", "include/*", "src/*", "LICENSE"
+    exports_sources = "CMakeLists.txt", "cmake/*", "include/*", "src/*", "tests/*", "LICENSE"
 
     def requirements(self):
         self.requires("ffmpeg/7.1.5")
+
+    def build_requirements(self):
+        skip_tests = self.conf.get("tools.build:skip_test", default=False, check_type=bool)
+        if not skip_tests and can_run(self):
+            self.test_requires("catch2/3.8.1")
 
     def config_options(self):
         if self.settings.os == "Windows":
@@ -63,12 +69,17 @@ class ImvideoConan(ConanFile):
         deps = CMakeDeps(self)
         deps.generate()
         toolchain = CMakeToolchain(self, generator="Ninja")
+        skip_tests = self.conf.get("tools.build:skip_test", default=False, check_type=bool)
+        toolchain.variables["IMVIDEO_BUILD_TESTS"] = not skip_tests and can_run(self)
         toolchain.generate()
 
     def build(self):
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
+        skip_tests = self.conf.get("tools.build:skip_test", default=False, check_type=bool)
+        if not skip_tests and can_run(self):
+            cmake.ctest(cli_args=["--output-on-failure"])
 
     def package(self):
         copy(self, "LICENSE", self.source_folder, os.path.join(self.package_folder, "licenses"))

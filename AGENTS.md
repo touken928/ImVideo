@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Public C++17 headers live in `include/imvideo/`; keep FFmpeg and implementation details out of this API surface. Implementations are in `src/`, with private shared definitions such as `frame_internal.hpp` remaining there. `tests/` contains the lightweight player test and its `frame.xbm` fixture. `example/implayer/` is a standalone Dear ImGui application that deliberately consumes the packaged library rather than adding the source tree directly. CMake package helpers are under `cmake/`.
+Public C++17 headers live in `include/imvideo/`; keep FFmpeg and implementation details out of this API surface. Implementations are in `src/`, with private shared definitions such as `frame_internal.hpp` remaining there. `tests/` contains Catch2 unit and component tests plus deterministic fixtures such as `frame.xbm`. `example/implayer/` is a standalone Dear ImGui application that deliberately consumes the packaged library rather than adding the source tree directly. CMake package helpers are under `cmake/`.
 
 The core flow is `Source -> Player -> Frame -> Renderer`. Audio-device integration is caller-owned through `AudioSink`; miniaudio belongs only to the example.
 
@@ -15,7 +15,7 @@ conan profile detect --force
 conan create . -s build_type=Release -b missing
 ```
 
-This creates `imvideo/0.1.0` and verifies that the package installs correctly. To build and run the repository test target:
+This creates `imvideo/0.1.0`, builds and runs the tests when the target platform is runnable, and verifies that the package installs correctly. To build and run the repository test targets directly:
 
 ```sh
 conan install . -of build/test -s build_type=Release -b missing
@@ -26,6 +26,8 @@ cmake --build build/test/build/Release
 ctest --test-dir build/test/build/Release --output-on-failure
 ```
 
+Use `ctest --test-dir build/test/build/Release -L unit` for fast tests that do not open media, or `-L component` for tests that exercise FFmpeg with local fixtures. Set the Conan configuration `tools.build:skip_test=True` when tests cannot run, such as during cross-compilation.
+
 Build the packaged example from `example/implayer/` using the commands in `README.md`.
 
 ## Coding Style & Naming Conventions
@@ -34,7 +36,7 @@ Use four-space indentation and C++17. Follow the existing style: `PascalCase` fo
 
 ## Testing Guidelines
 
-Tests use a small executable with the local `CHECK` macro rather than an external framework. Add focused regression checks to `tests/player_test.cpp`; place deterministic fixtures in `tests/`. Avoid network-dependent tests in the committed suite. Validate package creation and rebuild `implayer` when changing public APIs or exported dependencies.
+Tests use Catch2 3 and are registered individually with CTest. Put fast, deterministic public-API checks in the relevant `source_test.cpp`, `frame_test.cpp`, or `player_control_test.cpp` file. Put tests that start FFmpeg, decode fixtures, or wait for the player thread in `player_component_test.cpp`. Tag and register new tests under the matching `unit` or `component` CTest label, keep waits bounded, and place deterministic fixtures in `tests/`. Avoid network-dependent tests in the committed suite. Validate package creation and rebuild `implayer` when changing public APIs or exported dependencies.
 
 ## Commit & Pull Request Guidelines
 

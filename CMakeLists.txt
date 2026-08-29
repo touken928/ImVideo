@@ -54,9 +54,28 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/imvideoConfig.cmake ${CMAKE_CURRENT_BI
 
 if(IMVIDEO_BUILD_TESTS)
     enable_testing()
-    add_executable(imvideo_player_test tests/player_test.cpp)
-    target_link_libraries(imvideo_player_test PRIVATE imvideo::imvideo)
-    target_compile_definitions(imvideo_player_test PRIVATE
+    find_package(Catch2 3 REQUIRED)
+    include(Catch)
+
+    add_executable(imvideo_unit_tests
+        tests/frame_test.cpp
+        tests/player_control_test.cpp
+        tests/source_test.cpp
+    )
+    target_link_libraries(imvideo_unit_tests PRIVATE imvideo::imvideo Catch2::Catch2WithMain)
+    catch_discover_tests(imvideo_unit_tests
+        TEST_PREFIX "unit: "
+        PROPERTIES LABELS unit TIMEOUT 10
+    )
+
+    add_executable(imvideo_component_tests
+        tests/player_component_test.cpp
+    )
+    target_link_libraries(imvideo_component_tests PRIVATE imvideo::imvideo Catch2::Catch2WithMain)
+    target_compile_definitions(imvideo_component_tests PRIVATE
         IMVIDEO_TEST_IMAGE="${CMAKE_CURRENT_SOURCE_DIR}/tests/frame.xbm")
-    add_test(NAME imvideo_player_test COMMAND imvideo_player_test)
+    catch_discover_tests(imvideo_component_tests
+        TEST_PREFIX "component: "
+        PROPERTIES LABELS component TIMEOUT 10
+    )
 endif()

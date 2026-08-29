@@ -534,6 +534,8 @@ void Player::pause() {
     }
 }
 void Player::stop() {
+    const auto current = impl_->state_value.load();
+    if (current == State::Idle || current == State::Opening || current == State::Error) return;
     if (impl_->seekable_value) seek(0.0);
     impl_->state_value = State::Paused;
     if (impl_->audio_sink_opened) impl_->audio_sink->pause(true);
