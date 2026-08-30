@@ -41,6 +41,24 @@ Pass an HTTP(S) URL or RTSP URL in place of a local file. The example provides
 play/pause, seeking when supported, `0.5x` to `2.0x` playback controls, volume
 control, and automatic sizing.
 
+## Windows releases
+
+The `Release implayer for Windows` GitHub Actions workflow builds a statically
+linked Windows x86_64 executable as a downloadable workflow artifact when run
+manually. Pushing a version tag such as `v0.1.0` runs the same packaged-library
+build and publishes `implayer.exe` directly in a GitHub Release with
+automatically generated release notes. The executable still uses Windows system
+libraries, but does not require separately distributed FFmpeg, GLFW, or MSVC
+runtime DLLs.
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Update the versions in `conanfile.py` and `CMakeLists.txt` before tagging a new
+library release.
+
 ## API sketch
 
 ```cpp
