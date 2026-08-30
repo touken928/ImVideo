@@ -7,8 +7,8 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <mutex>
 #include <string>
@@ -51,7 +51,9 @@ std::vector<AVHWDeviceType> hardware_candidates() {
 #endif
 }
 
-struct HardwareSelection { AVPixelFormat format = AV_PIX_FMT_NONE; };
+struct HardwareSelection {
+    AVPixelFormat format = AV_PIX_FMT_NONE;
+};
 
 AVPixelFormat choose_hardware_format(AVCodecContext* context, const AVPixelFormat* formats) {
     const auto wanted = static_cast<HardwareSelection*>(context->opaque)->format;
@@ -159,7 +161,8 @@ struct Player::Impl {
             for (int i = 0;; ++i) {
                 const AVCodecHWConfig* config = avcodec_get_hw_config(codec, i);
                 if (!config) break;
-                if (config->device_type != type || !(config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) continue;
+                if (config->device_type != type || !(config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX))
+                    continue;
                 AVBufferRef* device = nullptr;
                 if (av_hwdevice_ctx_create(&device, type, nullptr, nullptr, 0) < 0) continue;
                 hardware_selection.format = config->pix_fmt;
@@ -197,14 +200,13 @@ struct Player::Impl {
         if (!sample_format) return false;
 
         char arguments[512]{};
-        std::snprintf(arguments, sizeof(arguments),
-                      "time_base=1/%d:sample_rate=%d:sample_fmt=%s:channel_layout=%s",
+        std::snprintf(arguments, sizeof(arguments), "time_base=1/%d:sample_rate=%d:sample_fmt=%s:channel_layout=%s",
                       audio_codec->sample_rate, audio_codec->sample_rate, sample_format, layout);
         const AVFilter* source_filter = avfilter_get_by_name("abuffer");
         const AVFilter* sink_filter = avfilter_get_by_name("abuffersink");
         if (!source_filter || !sink_filter ||
-            avfilter_graph_create_filter(&audio_filter_source, source_filter,
-                                         "audio_source", arguments, nullptr, audio_filter_graph) < 0)
+            avfilter_graph_create_filter(&audio_filter_source, source_filter, "audio_source", arguments, nullptr,
+                                         audio_filter_graph) < 0)
             return false;
 
         AVFilterContext* previous = audio_filter_source;
@@ -217,8 +219,8 @@ struct Player::Impl {
         }
         if (!append_atempo(previous, remaining, index)) return false;
 
-        if (avfilter_graph_create_filter(&audio_filter_sink, sink_filter,
-                                         "audio_sink", nullptr, nullptr, audio_filter_graph) < 0 ||
+        if (avfilter_graph_create_filter(&audio_filter_sink, sink_filter, "audio_sink", nullptr, nullptr,
+                                         audio_filter_graph) < 0 ||
             avfilter_link(previous, 0, audio_filter_sink, 0) < 0 ||
             avfilter_graph_config(audio_filter_graph, nullptr) < 0)
             return false;
@@ -232,8 +234,8 @@ struct Player::Impl {
         if (!atempo) return false;
         const std::string name = "atempo_" + std::to_string(index);
         const std::string value = "tempo=" + std::to_string(rate);
-        if (avfilter_graph_create_filter(&filter, atempo, name.c_str(),
-                                         value.c_str(), nullptr, audio_filter_graph) < 0 ||
+        if (avfilter_graph_create_filter(&filter, atempo, name.c_str(), value.c_str(), nullptr, audio_filter_graph) <
+                0 ||
             avfilter_link(previous, 0, filter, 0) < 0)
             return false;
         previous = filter;
@@ -282,7 +284,8 @@ struct Player::Impl {
         while (!stop_requested) {
             {
                 std::unique_lock lock(control_mutex);
-                condition.wait(lock, [this] { return stop_requested || state_value == State::Playing || seek_request >= 0.0; });
+                condition.wait(
+                    lock, [this] { return stop_requested || state_value == State::Playing || seek_request >= 0.0; });
                 if (stop_requested) break;
                 if (seek_request >= 0.0) {
                     const double target = std::exchange(seek_request, -1.0);
@@ -340,9 +343,10 @@ struct Player::Impl {
                                 origin_set = true;
                             }
                             const auto due = origin + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                                          std::chrono::duration<double>(
-                                                              (seconds - media_origin) / playback_rate_value.load()));
-                            while (!stop_requested && state_value == State::Playing && std::chrono::steady_clock::now() < due)
+                                                          std::chrono::duration<double>((seconds - media_origin) /
+                                                                                        playback_rate_value.load()));
+                            while (!stop_requested && state_value == State::Playing &&
+                                   std::chrono::steady_clock::now() < due)
                                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
                             if (!stop_requested && state_value != State::Playing) {
                                 std::unique_lock lock(control_mutex);
@@ -435,9 +439,8 @@ struct Player::Impl {
 
         reset_resampler();
         AVChannelLayout output_layout = AV_CHANNEL_LAYOUT_STEREO;
-        if (swr_alloc_set_opts2(&resampler, &output_layout, AV_SAMPLE_FMT_FLT,
-                                static_cast<int>(output_rate), &frame->ch_layout,
-                                input_format, input_rate, 0, nullptr) < 0 ||
+        if (swr_alloc_set_opts2(&resampler, &output_layout, AV_SAMPLE_FMT_FLT, static_cast<int>(output_rate),
+                                &frame->ch_layout, input_format, input_rate, 0, nullptr) < 0 ||
             !resampler || swr_init(resampler) < 0 ||
             av_channel_layout_copy(&resampler_input_layout, &frame->ch_layout) < 0) {
             reset_resampler();
@@ -451,8 +454,8 @@ struct Player::Impl {
     bool write_audio_frame(const AVFrame* frame) {
         if (!configure_resampler(frame)) return false;
         const auto delay = swr_get_delay(resampler, resampler_input_rate);
-        const int capacity = static_cast<int>(av_rescale_rnd(delay + frame->nb_samples, output_rate,
-                                                              resampler_input_rate, AV_ROUND_UP));
+        const int capacity =
+            static_cast<int>(av_rescale_rnd(delay + frame->nb_samples, output_rate, resampler_input_rate, AV_ROUND_UP));
         if (capacity <= 0) return false;
         audio_samples.resize(static_cast<std::size_t>(capacity) * output_channels);
         std::uint8_t* output[] = {reinterpret_cast<std::uint8_t*>(audio_samples.data())};
@@ -548,8 +551,7 @@ bool Player::seek(double seconds) {
     return true;
 }
 bool Player::set_speed(double speed) {
-    if (!can_set_speed() || !std::isfinite(speed) || speed < minimum_speed || speed > maximum_speed)
-        return false;
+    if (!can_set_speed() || !std::isfinite(speed) || speed < minimum_speed || speed > maximum_speed) return false;
     if (impl_->playback_rate_value.exchange(speed) != speed) ++impl_->presentation_revision;
     return true;
 }
@@ -560,7 +562,10 @@ bool Player::seekable() const noexcept { return impl_->seekable_value; }
 bool Player::live() const noexcept { return impl_->live_value; }
 bool Player::can_set_speed() const noexcept { return impl_->seekable_value && !impl_->live_value; }
 double Player::speed() const noexcept { return impl_->playback_rate_value.load(); }
-Frame Player::frame() const { std::lock_guard lock(impl_->frame_mutex); return impl_->latest; }
+Frame Player::frame() const {
+    std::lock_guard lock(impl_->frame_mutex);
+    return impl_->latest;
+}
 void Player::set_volume(float volume) {
     impl_->volume_value = std::clamp(volume, 0.0F, 1.0F);
     if (impl_->audio_sink_opened) impl_->audio_sink->set_volume(impl_->volume_value);

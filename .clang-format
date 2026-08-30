@@ -1,0 +1,42 @@
+---
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++17
+
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+
+BreakBeforeBraces: Attach
+ColumnLimit: 120
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLambdasOnASingleLine: Inline
+AllowShortLoopsOnASingleLine: true
+
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<imvideo/'
+    Priority: 1
+  - Regex: '^"'
+    Priority: 2
+  - Regex: '^<(GLFW|catch2|imgui|libav|libsw|miniaudio)'
+    Priority: 3
+  - Regex: '^<.*>'
+    Priority: 4
+SortIncludes: CaseSensitive
+SortUsingDeclarations: Lexicographic
+
+FixNamespaceComments: true
+NamespaceIndentation: None
+ReflowComments: true
+...

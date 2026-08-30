@@ -52,9 +52,8 @@ struct Renderer::Impl {
 
         if (input->width <= 0 || input->height <= 0) return false;
         const auto input_format = static_cast<AVPixelFormat>(input->format);
-        sws = sws_getCachedContext(sws, input->width, input->height, input_format,
-                                   input->width, input->height, AV_PIX_FMT_RGBA,
-                                   SWS_BILINEAR, nullptr, nullptr, nullptr);
+        sws = sws_getCachedContext(sws, input->width, input->height, input_format, input->width, input->height,
+                                   AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws) return false;
 
         width = input->width;

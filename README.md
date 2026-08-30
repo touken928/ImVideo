@@ -35,6 +35,19 @@ conan create . -s build_type=Release -b missing
 The recipe creates `imvideo/0.1.0`. Consumers use the normal Conan CMake flow
 and link `imvideo::imvideo` after `find_package(imvideo CONFIG REQUIRED)`.
 
+## Code formatting
+
+The project is formatted with clang-format 22.1.8. Install the pinned version
+and format every tracked C/C++ source and header before submitting changes:
+
+```sh
+python -m pip install "clang-format==22.1.8"
+git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' \
+  | xargs -0 clang-format -i
+```
+
+GitHub Actions runs the same version in check-only mode on every push.
+
 ## Build the example through the package
 
 The example deliberately consumes the packaged library rather than adding the

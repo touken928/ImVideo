@@ -2,9 +2,9 @@
 #if defined(_WIN32)
 #define NOMINMAX
 #endif
-#include <miniaudio.h>
-
 #include "miniaudio_sink.hpp"
+
+#include <miniaudio.h>
 
 #include <algorithm>
 #include <atomic>
@@ -21,14 +21,14 @@ struct MiniaudioSink::Impl {
         {
             std::lock_guard lock(self.mutex);
             copied = std::min(wanted, self.buffer.size() - self.read_offset);
-            if (copied != 0)
-                std::copy_n(self.buffer.data() + self.read_offset, copied, destination);
+            if (copied != 0) std::copy_n(self.buffer.data() + self.read_offset, copied, destination);
             self.read_offset += copied;
             if (self.read_offset == self.buffer.size()) {
                 self.buffer.clear();
                 self.read_offset = 0;
             } else if (self.read_offset > 32768) {
-                self.buffer.erase(self.buffer.begin(), self.buffer.begin() + static_cast<std::ptrdiff_t>(self.read_offset));
+                self.buffer.erase(self.buffer.begin(),
+                                  self.buffer.begin() + static_cast<std::ptrdiff_t>(self.read_offset));
                 self.read_offset = 0;
             }
         }
@@ -88,8 +88,10 @@ void MiniaudioSink::write(const float* samples, std::size_t frames) {
 
 void MiniaudioSink::pause(bool paused) {
     if (!impl_->initialized) return;
-    if (paused) ma_device_stop(&impl_->device);
-    else ma_device_start(&impl_->device);
+    if (paused)
+        ma_device_stop(&impl_->device);
+    else
+        ma_device_start(&impl_->device);
 }
 
 void MiniaudioSink::flush() {
@@ -99,12 +101,8 @@ void MiniaudioSink::flush() {
     impl_->played_frames = 0;
 }
 
-void MiniaudioSink::set_volume(float volume) {
-    impl_->volume = std::clamp(volume, 0.0F, 1.0F);
-}
+void MiniaudioSink::set_volume(float volume) { impl_->volume = std::clamp(volume, 0.0F, 1.0F); }
 
 double MiniaudioSink::clock_seconds() const noexcept {
-    return impl_->sample_rate
-               ? static_cast<double>(impl_->played_frames.load()) / impl_->sample_rate
-               : 0.0;
+    return impl_->sample_rate ? static_cast<double>(impl_->played_frames.load()) / impl_->sample_rate : 0.0;
 }
