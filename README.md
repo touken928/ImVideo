@@ -63,7 +63,9 @@ cmake --build --preset conan-release
 
 Pass an HTTP(S) URL or RTSP URL in place of a local file. The example provides
 play/pause, seeking when supported, `0.5x` to `2.0x` playback controls, volume
-control, and automatic sizing.
+control, and automatic sizing. Its GLFW host is borderless; the visible title
+bar, roll-up control, drag region, resize handles, and close control are
+provided by ImGui.
 
 ## Continuous integration and Windows releases
 
