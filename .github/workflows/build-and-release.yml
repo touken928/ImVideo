@@ -66,6 +66,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.CONAN_HOME }}/p
+          save-always: true
           key: >-
             conan-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.CONAN_VERSION }}-${{ hashFiles('conanfile.py', 'example/implayer/conanfile.py') }}-${{ runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v') && 'release' || 'core' }}
           restore-keys: |
@@ -165,6 +166,7 @@ jobs:
       # Keep reusable recipes and binary packages, but omit disposable build
       # trees, downloaded archives, sources, and temporary files from the cache.
       - name: Prune disposable Conan cache data
+        if: always()
         run: conan cache clean "*" --source --build --download --temp
 
   release:

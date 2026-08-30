@@ -2,6 +2,7 @@ from conan import ConanFile
 from conan.tools.build import can_run
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.files import copy
+from conan.tools.system.package_manager import Apt
 import os
 
 
@@ -50,6 +51,10 @@ class ImvideoConan(ConanFile):
         skip_tests = self.conf.get("tools.build:skip_test", default=False, check_type=bool)
         if not skip_tests and can_run(self):
             self.test_requires("catch2/3.8.1")
+
+    def system_requirements(self):
+        if self.settings.os == "Linux":
+            Apt(self).install(["libgl1-mesa-dev"], update=True, check=True)
 
     def config_options(self):
         if self.settings.os == "Windows":
