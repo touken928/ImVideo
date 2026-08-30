@@ -60,7 +60,10 @@ class ImvideoConan(ConanFile):
             self.options.rm_safe("fPIC")
         self.options["ffmpeg"].avdevice = False
         self.options["ffmpeg"].avfilter = True
+        self.options["ffmpeg"].postproc = False
         self.options["ffmpeg"].with_programs = False
+        if self.settings.os == "Windows":
+            self.options["ffmpeg"].with_ssl = False
 
     def layout(self):
         cmake_layout(self)

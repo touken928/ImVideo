@@ -48,14 +48,16 @@ jobs:
       - name: Build and test imvideo package
         run: >-
           conan create . -s build_type=Release
-          -s compiler.runtime=static -o "*:shared=False"
+          -s compiler.version=194 -s compiler.runtime=static
+          -o "*:shared=False"
           -c tools.cmake.cmaketoolchain:generator=Ninja -b missing
 
       - name: Install implayer dependencies
         working-directory: example/implayer
         run: >-
           conan install . -of build -s build_type=Release
-          -s compiler.runtime=static -o "*:shared=False"
+          -s compiler.version=194 -s compiler.runtime=static
+          -o "*:shared=False"
           -c tools.cmake.cmaketoolchain:generator=Ninja -b missing
 
       - name: Configure implayer
