@@ -32,7 +32,7 @@ conan profile detect --force
 conan create . -s build_type=Release -b missing
 ```
 
-The recipe creates `imvideo/0.2.0`. Consumers use the normal Conan CMake flow
+The recipe creates `imvideo/x.y.z`. Consumers use the normal Conan CMake flow
 and link `imvideo::imvideo` after `find_package(imvideo CONFIG REQUIRED)`.
 
 ## Code formatting
@@ -74,15 +74,15 @@ x86_64, macOS arm64, and Windows x86_64. Platform-specific Conan caches retain
 the compiled dependency packages between runs, so unchanged dependencies such
 as FFmpeg are not rebuilt from source for every commit.
 
-Pushing a version tag such as `v0.2.0` additionally builds the statically linked
+Pushing a version tag such as `vx.y.z` additionally builds the statically linked
 Windows x86_64 `implayer`, verifies that the tag matches the Conan package
 version, and publishes a ZIP plus its SHA-256 checksum in the corresponding
 GitHub Release. The executable still uses Windows system libraries, but does not
 require separately distributed FFmpeg, GLFW, or MSVC runtime DLLs.
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag vx.y.z
+git push origin vx.y.z
 ```
 
 Update the versions in `conanfile.py` and `CMakeLists.txt` before tagging a new
