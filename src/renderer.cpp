@@ -17,6 +17,12 @@
 #include <GL/gl.h>
 #endif
 
+// The Windows SDK ships an OpenGL 1.1 header, while this core enum was added
+// in OpenGL 1.2.  Keep the public renderer compatible with that system header.
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 extern "C" {
 #include <libavutil/hwcontext.h>
 #include <libavutil/pixdesc.h>
