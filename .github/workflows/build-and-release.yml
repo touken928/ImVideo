@@ -26,7 +26,9 @@ jobs:
         include:
           - name: Linux x86_64
             runner: ubuntu-latest
-            conan_args: ""
+            conan_args: >-
+              --conf tools.system.package_manager:mode=install
+              --conf tools.system.package_manager:sudo=True
           - name: macOS arm64
             runner: macos-latest
             conan_args: ""
