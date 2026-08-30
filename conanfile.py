@@ -62,7 +62,15 @@ class ImvideoConan(ConanFile):
         self.options["ffmpeg"].avfilter = True
         self.options["ffmpeg"].postproc = False
         self.options["ffmpeg"].with_programs = False
-        if self.settings.os == "Windows":
+        if self.settings.os == "Linux":
+            self.options["ffmpeg"].with_libalsa = False
+            self.options["ffmpeg"].with_pulse = False
+            self.options["ffmpeg"].with_xcb = False
+            self.options["ffmpeg"].with_xlib = False
+        elif self.settings.os == "Macos":
+            self.options["ffmpeg"].with_appkit = False
+            self.options["ffmpeg"].with_avfoundation = False
+        elif self.settings.os == "Windows":
             self.options["ffmpeg"].with_ssl = False
 
     def layout(self):
