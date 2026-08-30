@@ -72,6 +72,7 @@ class ImvideoConan(ConanFile):
             self.options["ffmpeg"].with_pulse = False
             self.options["ffmpeg"].with_xcb = False
             self.options["ffmpeg"].with_xlib = False
+            self.options["ffmpeg"].with_vdpau = False
         elif self.settings.os == "Macos":
             self.options["ffmpeg"].with_appkit = False
             self.options["ffmpeg"].with_avfoundation = False
