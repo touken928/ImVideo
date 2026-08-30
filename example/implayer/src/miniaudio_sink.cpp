@@ -1,4 +1,7 @@
 #define MINIAUDIO_IMPLEMENTATION
+#if defined(_WIN32)
+#define NOMINMAX
+#endif
 #include <miniaudio.h>
 
 #include "miniaudio_sink.hpp"
