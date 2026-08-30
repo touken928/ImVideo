@@ -1,9 +1,20 @@
-# imvideo
+<h1 align="center">ImVideo</h1>
 
-`imvideo` is a lightweight C++17 video playback library for Dear ImGui. It uses
-FFmpeg for file, HTTP and RTSP input, tries platform hardware decoders before
-falling back to software decoding, and exposes decoded video through one simple
-pipeline:
+<p align="center">
+  <strong>Lightweight C++17 video playback for Dear ImGui, powered by FFmpeg and OpenGL.</strong>
+</p>
+
+<p align="center">
+  <a href="https://en.cppreference.com/w/cpp/17.html"><img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg?style=for-the-badge&amp;logo=cplusplus" alt="C++17"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg?style=for-the-badge" alt="License: Apache 2.0"></a>
+  <a href="https://github.com/touken928/ImVideo/actions/workflows/release-implayer-windows.yml"><img src="https://img.shields.io/github/actions/workflow/status/touken928/ImVideo/release-implayer-windows.yml?style=for-the-badge&amp;logo=githubactions&amp;logoColor=white&amp;label=windows" alt="Windows build"></a>
+  <a href="https://github.com/touken928/ImVideo/releases"><img src="https://img.shields.io/github/v/release/touken928/ImVideo?style=for-the-badge&amp;logo=github&amp;label=release" alt="GitHub release"></a>
+  <a href="https://github.com/touken928/ImVideo/stargazers"><img src="https://img.shields.io/github/stars/touken928/ImVideo?style=for-the-badge&amp;color=yellow&amp;logo=github" alt="GitHub stars"></a>
+</p>
+
+ImVideo accepts local files, HTTP(S) streams, and RTSP sources. It tries
+platform hardware decoders before falling back to software decoding, then
+exposes decoded video through a small pipeline:
 
 ```
 Source -> Player -> Frame -> Renderer -> OpenGL texture
@@ -45,11 +56,11 @@ control, and automatic sizing.
 
 The `Release implayer for Windows` GitHub Actions workflow builds a statically
 linked Windows x86_64 executable as a downloadable workflow artifact when run
-manually. Pushing a version tag such as `v0.1.0` runs the same packaged-library
-build and publishes `implayer.exe` directly in a GitHub Release with
-automatically generated release notes. The executable still uses Windows system
-libraries, but does not require separately distributed FFmpeg, GLFW, or MSVC
-runtime DLLs.
+manually. Supply an existing `release_tag` to publish that manual build. Pushing
+a version tag such as `v0.1.0` runs the same packaged-library build and publishes
+`implayer.exe` directly in a GitHub Release with automatically generated release
+notes. The executable still uses Windows system libraries, but does not require
+separately distributed FFmpeg, GLFW, or MSVC runtime DLLs.
 
 ```sh
 git tag v0.1.0
