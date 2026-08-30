@@ -26,7 +26,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          # Manual runs publish an existing tag using the fixed workflow on main.
+          # Tag-triggered runs still build the exact tagged revision.
+          ref: ${{ github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
