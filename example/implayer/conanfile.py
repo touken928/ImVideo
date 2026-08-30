@@ -8,7 +8,7 @@ class ImplayerConan(ConanFile):
     exports_sources = "CMakeLists.txt", "src/*"
 
     def requirements(self):
-        self.requires("imvideo/0.1.0")
+        self.requires("imvideo/0.2.0")
         self.requires("glfw/3.4")
         self.requires("imgui/1.92.9b")
         self.requires("miniaudio/0.11.22")

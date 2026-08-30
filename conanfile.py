@@ -8,7 +8,7 @@ import os
 
 class ImvideoConan(ConanFile):
     name = "imvideo"
-    version = "0.1.0"
+    version = "0.2.0"
     package_type = "library"
     license = "Apache-2.0"
     description = "A lightweight Dear ImGui video playback library"

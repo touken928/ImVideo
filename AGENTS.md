@@ -15,7 +15,7 @@ conan profile detect --force
 conan create . -s build_type=Release -b missing
 ```
 
-This creates `imvideo/0.1.0`, builds and runs the tests when the target platform is runnable, and verifies that the package installs correctly. To build and run the repository test targets directly:
+This creates `imvideo/0.2.0`, builds and runs the tests when the target platform is runnable, and verifies that the package installs correctly. To build and run the repository test targets directly:
 
 ```sh
 conan install . -of build/test -s build_type=Release -b missing
