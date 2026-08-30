@@ -30,6 +30,9 @@ target_link_libraries(imvideo
         ffmpeg::swresample
         OpenGL::GL
 )
+if(WIN32)
+    target_link_libraries(imvideo PRIVATE ws2_32)
+endif()
 set_target_properties(imvideo PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
