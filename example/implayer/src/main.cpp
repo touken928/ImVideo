@@ -229,6 +229,7 @@ int main(int argc, char** argv) {
     });
 
     bool player_window_open = true;
+    bool seeking = false;
     float seek_position = 0.0F;
     WindowChromeState window_chrome;
     while (!open_done && player_window_open && !glfwWindowShouldClose(window)) {
@@ -320,13 +321,13 @@ int main(int argc, char** argv) {
             if (player.seekable()) {
                 ImGui::SameLine();
                 const float duration = static_cast<float>(player.duration());
-                const bool dragging_seek = ImGui::GetActiveID() == ImGui::GetID("##position");
-                if (!dragging_seek) seek_position = static_cast<float>(player.position());
+                if (!seeking) seek_position = static_cast<float>(player.position());
                 char position_format[48]{};
                 std::snprintf(position_format, sizeof(position_format), "%%.1f / %.1f s", duration);
                 ImGui::SetNextItemWidth(-1.0F);
                 if (ImGui::SliderFloat("##position", &seek_position, 0.0F, duration, position_format))
                     player.seek(seek_position);
+                seeking = ImGui::IsItemActive();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback position");
             }
             ImGui::PopStyleVar();
