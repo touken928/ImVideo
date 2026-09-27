@@ -34,7 +34,8 @@ public:
     void pause();
     void stop();
     // Blocks until the demuxer accepts or rejects the request. Seconds are relative
-    // to the start of the input. Control methods must be called from one thread.
+    // to the start of the input. Does not abort an in-flight read; a network seek
+    // waits for the current packet. Control methods must be called from one thread.
     bool seek(double seconds);
     bool set_speed(double speed);
 

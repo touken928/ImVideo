@@ -302,7 +302,7 @@ struct Player::Impl {
         if (!format) return fail_open("cannot allocate input context");
         format->interrupt_callback.callback = [](void* opaque) {
             const auto* self = static_cast<Impl*>(opaque);
-            return self->stop_requested.load() || self->interrupt_seek.load() ? 1 : 0;
+            return self->stop_requested.load() ? 1 : 0;
         };
         format->interrupt_callback.opaque = this;
         AVDictionary* dictionary = nullptr;
@@ -643,7 +643,6 @@ struct Player::Impl {
         std::lock_guard lock(control_mutex);
         if (seek_request < 0.0) return false;
         relative = std::exchange(seek_request, -1.0);
-        interrupt_seek = false;
         return true;
     }
 
@@ -888,7 +887,6 @@ struct Player::Impl {
     bool seek_completed = true;
     bool seek_ok = false;
     bool worker_running = false;
-    std::atomic<bool> interrupt_seek{false};
     double discard_until = -1.0;
     double audio_clock_media_origin = 0.0;
     std::deque<AVPacket*> held_packets;
@@ -954,7 +952,6 @@ bool Player::seek(double seconds) {
         state == State::Error)
         return false;
     impl_->seek_request = std::clamp(seconds, 0.0, std::max(0.0, impl_->duration_value));
-    impl_->interrupt_seek = true;
     impl_->seek_completed = false;
     impl_->seek_ok = false;
     impl_->condition.notify_all();

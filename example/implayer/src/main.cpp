@@ -325,9 +325,12 @@ int main(int argc, char** argv) {
                 char position_format[48]{};
                 std::snprintf(position_format, sizeof(position_format), "%%.1f / %.1f s", duration);
                 ImGui::SetNextItemWidth(-1.0F);
-                if (ImGui::SliderFloat("##position", &seek_position, 0.0F, duration, position_format))
-                    player.seek(seek_position);
-                seeking = ImGui::IsItemActive();
+                const bool edited = ImGui::SliderFloat("##position", &seek_position, 0.0F, duration, position_format);
+                const bool still_seeking = ImGui::IsItemActive();
+                // One seek when the drag ends. Seeking on every tick aborts the HTTP read and
+                // leaves the demuxer on a partial file.
+                if ((seeking && !still_seeking) || (edited && !still_seeking)) player.seek(seek_position);
+                seeking = still_seeking;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback position");
             }
             ImGui::PopStyleVar();
