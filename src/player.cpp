@@ -10,8 +10,6 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <deque>
 #include <limits>
 #include <mutex>
@@ -27,13 +25,10 @@ extern "C" {
 #include <libavfilter/buffersrc.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
 }
 
 namespace imvideo {
@@ -79,59 +74,208 @@ struct PresentationClock {
     std::uint64_t observed_revision = 0;
 };
 
-int normalize_rotation(double angle) {
-    if (!std::isfinite(angle)) return 0;
-    int rounded = static_cast<int>(std::lround(angle)) % 360;
-    if (rounded < 0) rounded += 360;
-    if (rounded == 90 || rounded == 180 || rounded == 270) return rounded;
-    return 0;
-}
+class AudioPipeline {
+public:
+    AudioPipeline() { av_channel_layout_uninit(&resampler_input_layout_); }
+    ~AudioPipeline() { close(); }
 
-int rotation_from_matrix(const uint8_t* data, std::size_t size) {
-    if (!data || size < 9 * sizeof(std::int32_t)) return 0;
-    const auto angle = av_display_rotation_get(reinterpret_cast<const std::int32_t*>(data));
-    // The matrix angle is counterclockwise. Metadata and display use clockwise degrees.
-    return normalize_rotation(-angle);
-}
+    AudioPipeline(const AudioPipeline&) = delete;
+    AudioPipeline& operator=(const AudioPipeline&) = delete;
 
-void configure_scaler_colors(SwsContext* scaler, const AVFrame* frame) {
-    const auto format = static_cast<AVPixelFormat>(frame->format);
-    const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
-    const bool rgb = descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
-    int source_range = rgb ? 1 : 0;
-    if (frame->color_range == AVCOL_RANGE_JPEG) source_range = 1;
-    if (frame->color_range == AVCOL_RANGE_MPEG) source_range = 0;
-    int space = frame->colorspace;
-    if (space == AVCOL_SPC_UNSPECIFIED || space == AVCOL_SPC_RGB)
-        space = frame->height > 576 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG;
-    const int* source = sws_getCoefficients(space);
-    const int* destination = sws_getCoefficients(SWS_CS_DEFAULT);
-    sws_setColorspaceDetails(scaler, source, source_range, destination, 1, 0, 1 << 16, 1 << 16);
-}
-
-void rotate_rgba(const std::uint8_t* source, int source_width, int source_height, int source_stride,
-                 std::uint8_t* destination, int destination_stride, int clockwise_degrees) {
-    if (clockwise_degrees == 180) {
-        for (int y = 0; y < source_height; ++y) {
-            const auto* row = source + static_cast<std::size_t>(y) * source_stride;
-            auto* output = destination + static_cast<std::size_t>(source_height - 1 - y) * destination_stride;
-            for (int x = 0; x < source_width; ++x)
-                std::memcpy(output + static_cast<std::size_t>(source_width - 1 - x) * 4,
-                            row + static_cast<std::size_t>(x) * 4, 4);
+    bool open(AVCodecContext* codec, const std::shared_ptr<AudioSink>& sink, float volume, double rate) {
+        close();
+        if (!codec || !sink) return false;
+        codec_ = codec;
+        sink_ = sink;
+        output_rate_ = codec->sample_rate > 0 ? static_cast<std::uint32_t>(codec->sample_rate) : 48000U;
+        output_channels_ = 2;
+        filtered_ = av_frame_alloc();
+        if (!filtered_ || !configure_filter(rate)) {
+            release_graph();
+            sink_.reset();
+            codec_ = nullptr;
+            return false;
         }
-        return;
-    }
-    const bool right = clockwise_degrees == 90;
-    for (int y = 0; y < source_height; ++y) {
-        for (int x = 0; x < source_width; ++x) {
-            const int output_x = right ? source_height - 1 - y : y;
-            const int output_y = right ? x : source_width - 1 - x;
-            std::memcpy(destination + static_cast<std::size_t>(output_y) * destination_stride +
-                            static_cast<std::size_t>(output_x) * 4,
-                        source + static_cast<std::size_t>(y) * source_stride + static_cast<std::size_t>(x) * 4, 4);
+        if (!sink_->open(static_cast<int>(output_rate_), static_cast<int>(output_channels_))) {
+            release_graph();
+            sink_.reset();
+            codec_ = nullptr;
+            return false;
         }
+        opened_ = true;
+        sink_->set_volume(volume);
+        return true;
     }
-}
+
+    void close() {
+        if (opened_ && sink_) sink_->close();
+        opened_ = false;
+        release_graph();
+        sink_.reset();
+        codec_ = nullptr;
+        applied_rate_ = 1.0;
+    }
+
+    [[nodiscard]] bool opened() const noexcept { return opened_; }
+    [[nodiscard]] AudioSink* sink() const noexcept { return sink_.get(); }
+    [[nodiscard]] double applied_rate() const noexcept { return applied_rate_; }
+
+    bool reset_tempo(double rate) {
+        if (!configure_filter(rate)) return false;
+        reset_resampler();
+        if (opened_ && sink_) sink_->flush();
+        return true;
+    }
+
+    bool consume(AVFrame* decoded, double rate) {
+        if (rate != applied_rate_ && !reset_tempo(rate)) return false;
+        if (!source_) return true;
+        if (av_buffersrc_add_frame_flags(source_, decoded, AV_BUFFERSRC_FLAG_KEEP_REF) < 0) return true;
+        while (av_buffersink_get_frame(sink_filter_, filtered_) >= 0) {
+            if (!write_frame(filtered_)) {
+                av_frame_unref(filtered_);
+                return false;
+            }
+            av_frame_unref(filtered_);
+        }
+        return true;
+    }
+
+    void set_volume(float volume) {
+        if (opened_ && sink_) sink_->set_volume(volume);
+    }
+
+private:
+    void release_graph() {
+        swr_free(&resampler_);
+        av_channel_layout_uninit(&resampler_input_layout_);
+        resampler_input_format_ = AV_SAMPLE_FMT_NONE;
+        resampler_input_rate_ = 0;
+        avfilter_graph_free(&graph_);
+        source_ = nullptr;
+        sink_filter_ = nullptr;
+        av_frame_free(&filtered_);
+        output_rate_ = 0;
+        output_channels_ = 0;
+    }
+
+    bool configure_filter(double rate) {
+        avfilter_graph_free(&graph_);
+        source_ = nullptr;
+        sink_filter_ = nullptr;
+        if (!codec_) return false;
+
+        graph_ = avfilter_graph_alloc();
+        if (!graph_) return false;
+
+        char layout[256]{};
+        if (av_channel_layout_describe(&codec_->ch_layout, layout, sizeof(layout)) < 0) return false;
+        const char* sample_format = av_get_sample_fmt_name(codec_->sample_fmt);
+        if (!sample_format) return false;
+
+        char arguments[512]{};
+        std::snprintf(arguments, sizeof(arguments), "time_base=1/%d:sample_rate=%d:sample_fmt=%s:channel_layout=%s",
+                      codec_->sample_rate, codec_->sample_rate, sample_format, layout);
+        const AVFilter* source_filter = avfilter_get_by_name("abuffer");
+        const AVFilter* sink_filter = avfilter_get_by_name("abuffersink");
+        if (!source_filter || !sink_filter ||
+            avfilter_graph_create_filter(&source_, source_filter, "audio_source", arguments, nullptr, graph_) < 0)
+            return false;
+
+        AVFilterContext* previous = source_;
+        double remaining = rate;
+        int index = 0;
+        while (remaining < 0.5 || remaining > 2.0) {
+            const double stage_rate = remaining < 0.5 ? 0.5 : 2.0;
+            remaining /= stage_rate;
+            if (!append_atempo(previous, stage_rate, index++)) return false;
+        }
+        if (!append_atempo(previous, remaining, index)) return false;
+
+        if (avfilter_graph_create_filter(&sink_filter_, sink_filter, "audio_sink", nullptr, nullptr, graph_) < 0 ||
+            avfilter_link(previous, 0, sink_filter_, 0) < 0 || avfilter_graph_config(graph_, nullptr) < 0)
+            return false;
+        applied_rate_ = rate;
+        return true;
+    }
+
+    bool append_atempo(AVFilterContext*& previous, double rate, int index) {
+        AVFilterContext* filter = nullptr;
+        const AVFilter* atempo = avfilter_get_by_name("atempo");
+        if (!atempo) return false;
+        const std::string name = "atempo_" + std::to_string(index);
+        char rate_text[32]{};
+        const auto formatted =
+            std::to_chars(rate_text, rate_text + sizeof(rate_text) - 1, rate, std::chars_format::general, 6);
+        if (formatted.ec != std::errc{}) return false;
+        *formatted.ptr = '\0';
+        const std::string value = std::string("tempo=") + rate_text;
+        if (avfilter_graph_create_filter(&filter, atempo, name.c_str(), value.c_str(), nullptr, graph_) < 0 ||
+            avfilter_link(previous, 0, filter, 0) < 0)
+            return false;
+        previous = filter;
+        return true;
+    }
+
+    void reset_resampler() {
+        swr_free(&resampler_);
+        av_channel_layout_uninit(&resampler_input_layout_);
+        resampler_input_format_ = AV_SAMPLE_FMT_NONE;
+        resampler_input_rate_ = 0;
+    }
+
+    bool configure_resampler(const AVFrame* frame) {
+        const auto input_format = static_cast<AVSampleFormat>(frame->format);
+        const int input_rate = frame->sample_rate > 0 ? frame->sample_rate : codec_->sample_rate;
+        if (input_format == AV_SAMPLE_FMT_NONE || input_rate <= 0 || frame->ch_layout.nb_channels <= 0) return false;
+        if (resampler_ && resampler_input_format_ == input_format && resampler_input_rate_ == input_rate &&
+            av_channel_layout_compare(&resampler_input_layout_, &frame->ch_layout) == 0)
+            return true;
+
+        reset_resampler();
+        AVChannelLayout output_layout = AV_CHANNEL_LAYOUT_STEREO;
+        if (swr_alloc_set_opts2(&resampler_, &output_layout, AV_SAMPLE_FMT_FLT, static_cast<int>(output_rate_),
+                                &frame->ch_layout, input_format, input_rate, 0, nullptr) < 0 ||
+            !resampler_ || swr_init(resampler_) < 0 ||
+            av_channel_layout_copy(&resampler_input_layout_, &frame->ch_layout) < 0) {
+            reset_resampler();
+            return false;
+        }
+        resampler_input_format_ = input_format;
+        resampler_input_rate_ = input_rate;
+        return true;
+    }
+
+    bool write_frame(const AVFrame* frame) {
+        if (!configure_resampler(frame) || !sink_) return false;
+        const auto delay = swr_get_delay(resampler_, resampler_input_rate_);
+        const int capacity = static_cast<int>(
+            av_rescale_rnd(delay + frame->nb_samples, output_rate_, resampler_input_rate_, AV_ROUND_UP));
+        if (capacity <= 0) return false;
+        samples_.resize(static_cast<std::size_t>(capacity) * output_channels_);
+        std::uint8_t* output[] = {reinterpret_cast<std::uint8_t*>(samples_.data())};
+        const int produced = swr_convert(resampler_, output, capacity,
+                                         const_cast<const std::uint8_t**>(frame->extended_data), frame->nb_samples);
+        if (produced > 0) sink_->write(samples_.data(), static_cast<std::size_t>(produced));
+        return produced >= 0;
+    }
+
+    AVCodecContext* codec_ = nullptr;
+    std::shared_ptr<AudioSink> sink_;
+    bool opened_ = false;
+    SwrContext* resampler_ = nullptr;
+    AVChannelLayout resampler_input_layout_{};
+    AVSampleFormat resampler_input_format_ = AV_SAMPLE_FMT_NONE;
+    int resampler_input_rate_ = 0;
+    AVFilterGraph* graph_ = nullptr;
+    AVFilterContext* source_ = nullptr;
+    AVFilterContext* sink_filter_ = nullptr;
+    AVFrame* filtered_ = nullptr;
+    std::uint32_t output_rate_ = 0;
+    std::uint32_t output_channels_ = 0;
+    double applied_rate_ = 1.0;
+    std::vector<float> samples_;
+};
 
 } // namespace
 
@@ -149,7 +293,6 @@ struct Player::Impl {
         options = requested;
         audio_clock_media_origin = 0.0;
         hardware_selection.format = AV_PIX_FMT_NONE;
-        audio_sink = options.audio_sink;
         stop_requested = false;
         open_thread = std::this_thread::get_id();
         open_active = true;
@@ -181,10 +324,16 @@ struct Player::Impl {
         if (video_stream < 0) return fail_open("input has no decodable video stream");
         if (!open_decoder(video_stream, video_codec, true)) return fail_open_after_decoder();
 
-        if (audio_sink) {
+        if (options.audio_sink) {
             audio_stream = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, video_stream, nullptr, 0);
-            if (audio_stream >= 0 && !open_decoder(audio_stream, audio_codec, false)) disable_audio();
-            if (audio_codec && !open_audio_sink()) disable_audio();
+            if (audio_stream >= 0 && !open_decoder(audio_stream, audio_codec, false)) {
+                avcodec_free_context(&audio_codec);
+                audio_stream = -1;
+            }
+            if (audio_codec && !audio.open(audio_codec, options.audio_sink, volume_value, playback_rate_value.load())) {
+                avcodec_free_context(&audio_codec);
+                audio_stream = -1;
+            }
         }
         if (stop_requested) return fail_open("open cancelled");
 
@@ -298,89 +447,6 @@ struct Player::Impl {
         }
     }
 
-    bool open_audio_sink() {
-        output_rate = audio_codec->sample_rate > 0 ? static_cast<std::uint32_t>(audio_codec->sample_rate) : 48000U;
-        output_channels = 2;
-        filtered_audio = av_frame_alloc();
-        if (!filtered_audio || !configure_audio_filter(playback_rate_value)) return false;
-        if (!audio_sink->open(static_cast<int>(output_rate), static_cast<int>(output_channels))) return false;
-        audio_sink_opened = true;
-        audio_sink->set_volume(volume_value);
-        return true;
-    }
-
-    void disable_audio() {
-        if (audio_sink_opened && audio_sink) audio_sink->close();
-        audio_sink_opened = false;
-        avfilter_graph_free(&audio_filter_graph);
-        audio_filter_source = nullptr;
-        audio_filter_sink = nullptr;
-        av_frame_free(&filtered_audio);
-        avcodec_free_context(&audio_codec);
-        audio_stream = -1;
-    }
-
-    bool configure_audio_filter(double rate) {
-        avfilter_graph_free(&audio_filter_graph);
-        audio_filter_source = nullptr;
-        audio_filter_sink = nullptr;
-
-        audio_filter_graph = avfilter_graph_alloc();
-        if (!audio_filter_graph) return false;
-
-        char layout[256]{};
-        if (av_channel_layout_describe(&audio_codec->ch_layout, layout, sizeof(layout)) < 0) return false;
-        const char* sample_format = av_get_sample_fmt_name(audio_codec->sample_fmt);
-        if (!sample_format) return false;
-
-        char arguments[512]{};
-        std::snprintf(arguments, sizeof(arguments), "time_base=1/%d:sample_rate=%d:sample_fmt=%s:channel_layout=%s",
-                      audio_codec->sample_rate, audio_codec->sample_rate, sample_format, layout);
-        const AVFilter* source_filter = avfilter_get_by_name("abuffer");
-        const AVFilter* sink_filter = avfilter_get_by_name("abuffersink");
-        if (!source_filter || !sink_filter ||
-            avfilter_graph_create_filter(&audio_filter_source, source_filter, "audio_source", arguments, nullptr,
-                                         audio_filter_graph) < 0)
-            return false;
-
-        AVFilterContext* previous = audio_filter_source;
-        double remaining = rate;
-        int index = 0;
-        while (remaining < 0.5 || remaining > 2.0) {
-            const double stage_rate = remaining < 0.5 ? 0.5 : 2.0;
-            remaining /= stage_rate;
-            if (!append_atempo(previous, stage_rate, index++)) return false;
-        }
-        if (!append_atempo(previous, remaining, index)) return false;
-
-        if (avfilter_graph_create_filter(&audio_filter_sink, sink_filter, "audio_sink", nullptr, nullptr,
-                                         audio_filter_graph) < 0 ||
-            avfilter_link(previous, 0, audio_filter_sink, 0) < 0 ||
-            avfilter_graph_config(audio_filter_graph, nullptr) < 0)
-            return false;
-        applied_playback_rate = rate;
-        return true;
-    }
-
-    bool append_atempo(AVFilterContext*& previous, double rate, int index) {
-        AVFilterContext* filter = nullptr;
-        const AVFilter* atempo = avfilter_get_by_name("atempo");
-        if (!atempo) return false;
-        const std::string name = "atempo_" + std::to_string(index);
-        char rate_text[32]{};
-        const auto formatted =
-            std::to_chars(rate_text, rate_text + sizeof(rate_text) - 1, rate, std::chars_format::general, 6);
-        if (formatted.ec != std::errc{}) return false;
-        *formatted.ptr = '\0';
-        const std::string value = std::string("tempo=") + rate_text;
-        if (avfilter_graph_create_filter(&filter, atempo, name.c_str(), value.c_str(), nullptr, audio_filter_graph) <
-                0 ||
-            avfilter_link(previous, 0, filter, 0) < 0)
-            return false;
-        previous = filter;
-        return true;
-    }
-
     void close() {
         const bool wait_for_open = [this] {
             std::lock_guard lock(lifecycle_mutex);
@@ -406,7 +472,6 @@ struct Player::Impl {
         seekable_value = live_value = false;
         playback_rate_value = 1.0;
         presentation_revision = 0;
-        applied_playback_rate = 1.0;
         seek_request = -1.0;
         seek_completed = true;
         seek_ok = false;
@@ -416,15 +481,7 @@ struct Player::Impl {
     }
 
     void release_media() {
-        if (audio_sink_opened && audio_sink) audio_sink->close();
-        swr_free(&resampler);
-        av_channel_layout_uninit(&resampler_input_layout);
-        resampler_input_format = AV_SAMPLE_FMT_NONE;
-        resampler_input_rate = 0;
-        avfilter_graph_free(&audio_filter_graph);
-        audio_filter_source = nullptr;
-        audio_filter_sink = nullptr;
-        av_frame_free(&filtered_audio);
+        audio.close();
         avcodec_free_context(&audio_codec);
         avcodec_free_context(&video_codec);
         avformat_close_input(&format);
@@ -433,13 +490,10 @@ struct Player::Impl {
             latest = {};
         }
         video_stream = audio_stream = -1;
-        audio_sink_opened = false;
-        audio_sink.reset();
         clear_held_packets();
         input_eof = false;
         hardware_selection.format = AV_PIX_FMT_NONE;
-        sws_freeContext(display_sws);
-        display_sws = nullptr;
+        display.reset();
     }
 
     void finish_worker() {
@@ -520,7 +574,7 @@ struct Player::Impl {
             return;
         }
         state_value = State::Ended;
-        if (audio_sink_opened) audio_sink->pause(true);
+        if (audio.opened()) audio.sink()->pause(true);
     }
 
     void clear_held_packets() {
@@ -600,15 +654,10 @@ struct Player::Impl {
         if (ok) {
             if (video_codec) avcodec_flush_buffers(video_codec);
             if (audio_codec) avcodec_flush_buffers(audio_codec);
-            if (audio_sink_opened) {
-                if (!configure_audio_filter(playback_rate_value.load())) {
-                    set_error("cannot reset audio tempo filter after seek");
-                    state_value = State::Error;
-                    ok = false;
-                } else {
-                    reset_resampler();
-                    audio_sink->flush();
-                }
+            if (audio.opened() && !audio.reset_tempo(playback_rate_value.load())) {
+                set_error("cannot reset audio tempo filter after seek");
+                state_value = State::Error;
+                ok = false;
             }
         }
         if (ok) {
@@ -684,14 +733,14 @@ struct Player::Impl {
         const double rate = std::max(playback_rate_value.load(), minimum_speed);
         const auto delay = std::chrono::duration<double>((seconds - clock.media_origin) / rate);
         const auto due = clock.origin + std::chrono::duration_cast<std::chrono::steady_clock::duration>(delay);
-        const bool master_audio = audio_sink_opened && audio_sink && !live_value;
+        const bool master_audio = audio.opened() && !live_value;
         const double relative = relative_media_seconds(seconds);
         const auto blocked = [this] {
             return stop_requested.load() || state_value.load() != State::Playing || seek_request >= 0.0;
         };
         if (master_audio) {
             while (!blocked()) {
-                const double played = audio_clock_media_origin + audio_sink->clock_seconds() * rate;
+                const double played = audio_clock_media_origin + audio.sink()->clock_seconds() * rate;
                 if (played + 0.04 >= relative) break;
                 lock.unlock();
                 const bool wrote_audio = pump_audio();
@@ -716,77 +765,6 @@ struct Player::Impl {
         return true;
     }
 
-    int display_rotation_degrees(const AVFrame* frame) const {
-        if (const AVFrameSideData* side = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX)) {
-            const int rotation = rotation_from_matrix(side->data, side->size);
-            if (rotation != 0) return rotation;
-        }
-        const AVStream* stream = format->streams[video_stream];
-        if (stream->codecpar) {
-            for (int index = 0; index < stream->codecpar->nb_coded_side_data; ++index) {
-                const AVPacketSideData& data = stream->codecpar->coded_side_data[index];
-                if (data.type != AV_PKT_DATA_DISPLAYMATRIX) continue;
-                const int rotation = rotation_from_matrix(data.data, data.size);
-                if (rotation != 0) return rotation;
-            }
-        }
-        if (const AVDictionaryEntry* rotate = av_dict_get(stream->metadata, "rotate", nullptr, 0))
-            return normalize_rotation(std::atoi(rotate->value));
-        return 0;
-    }
-
-    AVFrame* make_display_frame(AVFrame* source) {
-        if (!source || source->width <= 0 || source->height <= 0) return nullptr;
-        int scaled_width = source->width;
-        int scaled_height = source->height;
-        AVRational sar = source->sample_aspect_ratio;
-        if (sar.num <= 0 || sar.den <= 0) sar = format->streams[video_stream]->sample_aspect_ratio;
-        if (sar.num > 0 && sar.den > 0 && sar.num != sar.den)
-            scaled_width = std::max(1, static_cast<int>(av_rescale(source->width, sar.num, sar.den)));
-        const int rotation = display_rotation_degrees(source);
-        const bool swap_axes = rotation == 90 || rotation == 270;
-        const int output_width = swap_axes ? scaled_height : scaled_width;
-        const int output_height = swap_axes ? scaled_width : scaled_height;
-        if (output_width > 16384 || output_height > 16384) return nullptr;
-        if (scaled_width > (std::numeric_limits<int>::max() / 4) / std::max(scaled_height, 1)) return nullptr;
-
-        display_sws =
-            sws_getCachedContext(display_sws, source->width, source->height, static_cast<AVPixelFormat>(source->format),
-                                 scaled_width, scaled_height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
-        if (!display_sws) return nullptr;
-        configure_scaler_colors(display_sws, source);
-
-        AVFrame* output = av_frame_alloc();
-        if (!output) return nullptr;
-        output->format = AV_PIX_FMT_RGBA;
-        output->width = output_width;
-        output->height = output_height;
-        if (av_frame_get_buffer(output, 32) < 0) {
-            av_frame_free(&output);
-            return nullptr;
-        }
-        if (rotation == 0) {
-            std::uint8_t* destination[] = {output->data[0]};
-            int strides[] = {output->linesize[0]};
-            if (sws_scale(display_sws, source->data, source->linesize, 0, source->height, destination, strides) <= 0) {
-                av_frame_free(&output);
-                return nullptr;
-            }
-            return output;
-        }
-
-        std::vector<std::uint8_t> scaled(static_cast<std::size_t>(scaled_width) * scaled_height * 4);
-        std::uint8_t* destination[] = {scaled.data()};
-        int strides[] = {scaled_width * 4};
-        if (sws_scale(display_sws, source->data, source->linesize, 0, source->height, destination, strides) <= 0) {
-            av_frame_free(&output);
-            return nullptr;
-        }
-        rotate_rgba(scaled.data(), scaled_width, scaled_height, scaled_width * 4, output->data[0], output->linesize[0],
-                    rotation);
-        return output;
-    }
-
     void publish_frame(AVFrame* decoded) {
         AVFrame* software = nullptr;
         AVFrame* source = decoded;
@@ -800,7 +778,7 @@ struct Player::Impl {
             }
             source = software;
         }
-        AVFrame* display = make_display_frame(source);
+        AVFrame* display = this->display.convert(source, format->streams[video_stream]);
         if (!display) display = av_frame_clone(source);
         av_frame_free(&software);
         if (!display) return;
@@ -836,31 +814,19 @@ struct Player::Impl {
             !wait_for_audio_lead(frame_seconds(decoded, format->streams[audio_stream])))
             return;
         const double requested_rate = playback_rate_value.load();
-        if (requested_rate != applied_playback_rate) {
-            if (!configure_audio_filter(requested_rate)) {
-                set_error("cannot configure audio tempo filter");
-                state_value = State::Error;
-                return;
-            }
-            reset_resampler();
-            audio_sink->flush();
+        if (requested_rate != audio.applied_rate() && !audio.reset_tempo(requested_rate)) {
+            set_error("cannot configure audio tempo filter");
+            state_value = State::Error;
+            return;
         }
-        if (!audio_filter_source) return;
-        if (av_buffersrc_add_frame_flags(audio_filter_source, decoded, AV_BUFFERSRC_FLAG_KEEP_REF) >= 0) {
-            while (av_buffersink_get_frame(audio_filter_sink, filtered_audio) >= 0) {
-                if (!write_audio_frame(filtered_audio)) {
-                    set_error("cannot resample filtered audio");
-                    state_value = State::Error;
-                    av_frame_unref(filtered_audio);
-                    return;
-                }
-                av_frame_unref(filtered_audio);
-            }
+        if (!audio.consume(decoded, requested_rate)) {
+            set_error("cannot resample filtered audio");
+            state_value = State::Error;
         }
     }
 
     bool wait_for_audio_lead(double absolute_seconds) {
-        if (!audio_sink_opened || !audio_sink || live_value) return true;
+        if (!audio.opened() || live_value) return true;
         const double relative = relative_media_seconds(absolute_seconds);
         std::unique_lock lock(control_mutex);
         const auto blocked = [this] {
@@ -868,7 +834,7 @@ struct Player::Impl {
         };
         while (!blocked()) {
             const double rate = std::max(playback_rate_value.load(), minimum_speed);
-            const double played = audio_clock_media_origin + audio_sink->clock_seconds() * rate;
+            const double played = audio_clock_media_origin + audio.sink()->clock_seconds() * rate;
             if (relative <= played + 0.5) return true;
             condition.wait_for(lock, std::chrono::milliseconds(10), blocked);
         }
@@ -879,49 +845,6 @@ struct Player::Impl {
         if (discard_until < 0.0 || audio_stream < 0 || frame->best_effort_timestamp == AV_NOPTS_VALUE) return false;
         const double seconds = frame->best_effort_timestamp * av_q2d(format->streams[audio_stream]->time_base);
         return seconds + discard_slack_seconds < discard_until;
-    }
-
-    void reset_resampler() {
-        swr_free(&resampler);
-        av_channel_layout_uninit(&resampler_input_layout);
-        resampler_input_format = AV_SAMPLE_FMT_NONE;
-        resampler_input_rate = 0;
-    }
-
-    bool configure_resampler(const AVFrame* frame) {
-        const auto input_format = static_cast<AVSampleFormat>(frame->format);
-        const int input_rate = frame->sample_rate > 0 ? frame->sample_rate : audio_codec->sample_rate;
-        if (input_format == AV_SAMPLE_FMT_NONE || input_rate <= 0 || frame->ch_layout.nb_channels <= 0) return false;
-        if (resampler && resampler_input_format == input_format && resampler_input_rate == input_rate &&
-            av_channel_layout_compare(&resampler_input_layout, &frame->ch_layout) == 0)
-            return true;
-
-        reset_resampler();
-        AVChannelLayout output_layout = AV_CHANNEL_LAYOUT_STEREO;
-        if (swr_alloc_set_opts2(&resampler, &output_layout, AV_SAMPLE_FMT_FLT, static_cast<int>(output_rate),
-                                &frame->ch_layout, input_format, input_rate, 0, nullptr) < 0 ||
-            !resampler || swr_init(resampler) < 0 ||
-            av_channel_layout_copy(&resampler_input_layout, &frame->ch_layout) < 0) {
-            reset_resampler();
-            return false;
-        }
-        resampler_input_format = input_format;
-        resampler_input_rate = input_rate;
-        return true;
-    }
-
-    bool write_audio_frame(const AVFrame* frame) {
-        if (!configure_resampler(frame)) return false;
-        const auto delay = swr_get_delay(resampler, resampler_input_rate);
-        const int capacity =
-            static_cast<int>(av_rescale_rnd(delay + frame->nb_samples, output_rate, resampler_input_rate, AV_ROUND_UP));
-        if (capacity <= 0) return false;
-        audio_samples.resize(static_cast<std::size_t>(capacity) * output_channels);
-        std::uint8_t* output[] = {reinterpret_cast<std::uint8_t*>(audio_samples.data())};
-        const int produced = swr_convert(resampler, output, capacity,
-                                         const_cast<const std::uint8_t**>(frame->extended_data), frame->nb_samples);
-        if (produced > 0) audio_sink->write(audio_samples.data(), static_cast<std::size_t>(produced));
-        return produced >= 0;
     }
 
     bool fail(std::string message) {
@@ -938,22 +861,11 @@ struct Player::Impl {
     AVFormatContext* format = nullptr;
     AVCodecContext* video_codec = nullptr;
     AVCodecContext* audio_codec = nullptr;
-    SwrContext* resampler = nullptr;
-    AVChannelLayout resampler_input_layout{};
-    AVSampleFormat resampler_input_format = AV_SAMPLE_FMT_NONE;
-    int resampler_input_rate = 0;
-    AVFilterGraph* audio_filter_graph = nullptr;
-    AVFilterContext* audio_filter_source = nullptr;
-    AVFilterContext* audio_filter_sink = nullptr;
-    AVFrame* filtered_audio = nullptr;
     int video_stream = -1;
     int audio_stream = -1;
     HardwareSelection hardware_selection;
-    std::shared_ptr<AudioSink> audio_sink;
-    bool audio_sink_opened = false;
-    std::uint32_t output_rate = 0;
-    std::uint32_t output_channels = 0;
-    std::vector<float> audio_samples;
+    AudioPipeline audio;
+    DisplayConverter display;
     Options options;
     std::thread worker;
     std::condition_variable condition;
@@ -972,7 +884,6 @@ struct Player::Impl {
     std::atomic<float> volume_value{1.0F};
     std::atomic<double> playback_rate_value{1.0};
     std::atomic<std::uint64_t> presentation_revision{0};
-    double applied_playback_rate = 1.0;
     double seek_request = -1.0;
     bool seek_completed = true;
     bool seek_ok = false;
@@ -982,7 +893,6 @@ struct Player::Impl {
     double audio_clock_media_origin = 0.0;
     std::deque<AVPacket*> held_packets;
     bool input_eof = false;
-    SwsContext* display_sws = nullptr;
     std::mutex lifecycle_mutex;
     std::mutex open_mutex;
     std::condition_variable open_finished;
@@ -1005,10 +915,10 @@ void Player::play() {
         if (state != State::Paused && state != State::Ended) return;
         ++impl_->presentation_revision;
         impl_->state_value = State::Playing;
-        resume_audio = impl_->audio_sink_opened;
+        resume_audio = impl_->audio.opened();
     }
     impl_->condition.notify_all();
-    if (resume_audio) impl_->audio_sink->pause(false);
+    if (resume_audio) impl_->audio.sink()->pause(false);
 }
 void Player::pause() {
     bool pause_audio = false;
@@ -1016,10 +926,10 @@ void Player::pause() {
         std::lock_guard lock(impl_->control_mutex);
         if (impl_->state_value != State::Playing) return;
         impl_->state_value = State::Paused;
-        pause_audio = impl_->audio_sink_opened;
+        pause_audio = impl_->audio.opened();
     }
     impl_->condition.notify_all();
-    if (pause_audio) impl_->audio_sink->pause(true);
+    if (pause_audio) impl_->audio.sink()->pause(true);
 }
 void Player::stop() {
     const auto current = impl_->state_value.load();
@@ -1031,10 +941,10 @@ void Player::stop() {
         const auto state = impl_->state_value.load();
         if (state == State::Idle || state == State::Opening || state == State::Error) return;
         impl_->state_value = State::Paused;
-        pause_audio = impl_->audio_sink_opened;
+        pause_audio = impl_->audio.opened();
     }
     impl_->condition.notify_all();
-    if (pause_audio) impl_->audio_sink->pause(true);
+    if (pause_audio) impl_->audio.sink()->pause(true);
 }
 bool Player::seek(double seconds) {
     if (!std::isfinite(seconds)) return false;
@@ -1073,7 +983,7 @@ Frame Player::frame() const {
 }
 void Player::set_volume(float volume) {
     impl_->volume_value = std::clamp(volume, 0.0F, 1.0F);
-    if (impl_->audio_sink_opened) impl_->audio_sink->set_volume(impl_->volume_value);
+    impl_->audio.set_volume(impl_->volume_value);
 }
 float Player::volume() const noexcept { return impl_->volume_value.load(); }
 bool Player::audio_enabled() const noexcept { return impl_->audio_codec != nullptr; }

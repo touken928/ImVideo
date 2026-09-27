@@ -7,6 +7,7 @@ find_package(FFmpeg REQUIRED COMPONENTS avformat avcodec avutil avfilter swscale
 find_package(OpenGL REQUIRED)
 
 add_library(imvideo
+    src/display_frame.cpp
     src/frame.cpp
     src/player.cpp
     src/renderer.cpp

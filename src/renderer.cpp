@@ -69,7 +69,7 @@ struct Renderer::Impl {
         sws = sws_getCachedContext(sws, input->width, input->height, input_format, input->width, input->height,
                                    AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws) return false;
-        configure_colors(sws, input);
+        configure_scaler_colors(sws, input);
 
         width = input->width;
         height = input->height;
@@ -78,21 +78,6 @@ struct Renderer::Impl {
         int strides[] = {width * 4};
         if (sws_scale(sws, input->data, input->linesize, 0, height, output, strides) <= 0) return false;
         return upload();
-    }
-
-    void configure_colors(SwsContext* scaler, const AVFrame* frame) const {
-        const auto format = static_cast<AVPixelFormat>(frame->format);
-        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
-        const bool rgb = descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
-        int source_range = rgb ? 1 : 0;
-        if (frame->color_range == AVCOL_RANGE_JPEG) source_range = 1;
-        if (frame->color_range == AVCOL_RANGE_MPEG) source_range = 0;
-        int space = frame->colorspace;
-        if (space == AVCOL_SPC_UNSPECIFIED || space == AVCOL_SPC_RGB)
-            space = frame->height > 576 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG;
-        const int* source = sws_getCoefficients(space);
-        const int* destination = sws_getCoefficients(SWS_CS_DEFAULT);
-        sws_setColorspaceDetails(scaler, source, source_range, destination, 1, 0, 1 << 16, 1 << 16);
     }
 
     bool upload() {

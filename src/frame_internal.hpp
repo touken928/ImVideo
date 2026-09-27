@@ -6,7 +6,28 @@ extern "C" {
 #include <libavutil/frame.h>
 }
 
+struct AVStream;
+struct SwsContext;
+
 namespace imvideo {
+
+void configure_scaler_colors(SwsContext* scaler, const AVFrame* frame);
+
+// Converts a decoded frame to RGBA in display orientation. The caller owns the result.
+class DisplayConverter {
+public:
+    DisplayConverter() = default;
+    ~DisplayConverter();
+
+    DisplayConverter(const DisplayConverter&) = delete;
+    DisplayConverter& operator=(const DisplayConverter&) = delete;
+
+    void reset();
+    [[nodiscard]] AVFrame* convert(const AVFrame* source, const AVStream* stream);
+
+private:
+    SwsContext* sws_ = nullptr;
+};
 
 struct Frame::Impl {
     explicit Impl(AVFrame* value, std::int64_t timestamp) : av_frame(value), pts_value(timestamp) {}
