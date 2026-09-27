@@ -346,7 +346,8 @@ struct Player::Impl {
                 avcodec_free_context(&audio_codec);
                 audio_stream = -1;
             }
-            if (audio_codec && !audio.open(audio_codec, requested.audio_sink, volume_value, playback_rate_value.load())) {
+            if (audio_codec &&
+                !audio.open(audio_codec, requested.audio_sink, volume_value, playback_rate_value.load())) {
                 avcodec_free_context(&audio_codec);
                 audio_stream = -1;
             }

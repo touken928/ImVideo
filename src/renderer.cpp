@@ -42,15 +42,14 @@ using BindBufferProc = void(APIENTRY*)(GLenum, GLuint);
 
 BindBufferProc get_bind_buffer_proc() {
     auto proc = reinterpret_cast<BindBufferProc>(wglGetProcAddress("glBindBuffer"));
-    if (proc == nullptr || proc == reinterpret_cast<BindBufferProc>(1) ||
-        proc == reinterpret_cast<BindBufferProc>(2) || proc == reinterpret_cast<BindBufferProc>(3) ||
-        proc == reinterpret_cast<BindBufferProc>(-1)) {
+    if (proc == nullptr || proc == reinterpret_cast<BindBufferProc>(1) || proc == reinterpret_cast<BindBufferProc>(2) ||
+        proc == reinterpret_cast<BindBufferProc>(3) || proc == reinterpret_cast<BindBufferProc>(-1)) {
         return nullptr;
     }
     return proc;
 }
 #else
-using BindBufferProc = void(*)(GLenum, GLuint);
+using BindBufferProc = void (*)(GLenum, GLuint);
 extern "C" void glBindBuffer(GLenum, GLuint);
 
 BindBufferProc get_bind_buffer_proc() { return &glBindBuffer; }
@@ -77,8 +76,7 @@ struct Renderer::Impl {
         if (!source || source->format != AV_PIX_FMT_RGBA || source->width <= 0 || source->height <= 0 ||
             source->width > 16384 || source->height > 16384)
             return false;
-        if (!source->data[0] || source->linesize[0] < source->width * 4)
-            return false;
+        if (!source->data[0] || source->linesize[0] < source->width * 4) return false;
 
         const int next_width = source->width;
         const int next_height = source->height;
@@ -129,11 +127,11 @@ struct Renderer::Impl {
         glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
         if (texture_id != 0) {
             if (upload_width == width && upload_height == height) {
-                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, upload_width, upload_height, GL_RGBA,
-                                GL_UNSIGNED_BYTE, pixels.data());
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, upload_width, upload_height, GL_RGBA, GL_UNSIGNED_BYTE,
+                                pixels.data());
             } else {
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upload_width, upload_height, 0, GL_RGBA,
-                             GL_UNSIGNED_BYTE, pixels.data());
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upload_width, upload_height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                             pixels.data());
             }
         }
         const bool uploaded = texture_id != 0 && glGetError() == GL_NO_ERROR;

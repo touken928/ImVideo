@@ -355,8 +355,7 @@ TEST_CASE("Changing speed at a seeked position while paused is retained on resum
         },
         std::chrono::seconds(1));
     UNSCOPED_INFO("paused pts=" << paused_pts << " position=" << paused_position
-                                << "; resumed pts=" << player.frame().pts()
-                                << " position=" << player.position());
+                                << "; resumed pts=" << player.frame().pts() << " position=" << player.position());
     REQUIRE(advanced);
     player.close();
 }
@@ -461,14 +460,14 @@ TEST_CASE("Changing speed flushes queued audio and follows newly consumed sample
         // The sink clock advances only by frames actually delivered through write().
         // Keep releasing queued audio in bounded increments so short clips and the
         // player's lead limiter cannot leave this test waiting for wall-clock time.
-        const bool progressed = wait_until([&] {
-            sink->consume_written_samples();
-            return player.position() > old_position;
-        }, std::chrono::seconds(3));
-        UNSCOPED_INFO("speed=" << speed << " old position=" << old_position
-                               << " new position=" << player.position()
-                               << " generation=" << speed_generation
-                               << " writes before=" << old_writes
+        const bool progressed = wait_until(
+            [&] {
+                sink->consume_written_samples();
+                return player.position() > old_position;
+            },
+            std::chrono::seconds(3));
+        UNSCOPED_INFO("speed=" << speed << " old position=" << old_position << " new position=" << player.position()
+                               << " generation=" << speed_generation << " writes before=" << old_writes
                                << " writes after=" << post_flush_writes);
         REQUIRE(progressed);
         REQUIRE(sink->generation() == speed_generation);
