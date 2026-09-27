@@ -4,6 +4,8 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <limits>
+#include <string>
+#include <type_traits>
 #include <utility>
 
 using Catch::Matchers::WithinAbs;
@@ -52,6 +54,29 @@ TEST_CASE("Playback controls are inert before a source is open", "[player][contr
     REQUIRE_FALSE(player.set_speed(4.0));
     REQUIRE_FALSE(player.set_speed(std::numeric_limits<double>::infinity()));
     REQUIRE_THAT(player.speed(), WithinAbs(1.0, 1e-12));
+}
+
+TEST_CASE("Opening a source preserves the current volume", "[player][control]") {
+    imvideo::Player player;
+    player.set_volume(0.25F);
+
+    REQUIRE_FALSE(player.open(imvideo::Source::file("")));
+
+    REQUIRE_THAT(player.volume(), WithinAbs(0.25F, 1e-6));
+}
+
+TEST_CASE("error() returns an owning string", "[player][error]") {
+    static_assert(std::is_same_v<decltype(std::declval<const imvideo::Player&>().error()), std::string>);
+
+    imvideo::Player player;
+    REQUIRE_FALSE(player.open(imvideo::Source::file("")));
+    const std::string saved = player.error();
+
+    player.close();
+
+    REQUIRE(player.state() == imvideo::State::Idle);
+    REQUIRE(player.error().empty());
+    REQUIRE(saved.find("empty") != std::string::npos);
 }
 
 TEST_CASE("An idle player can be moved", "[player][control]") {

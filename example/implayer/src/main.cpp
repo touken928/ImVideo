@@ -9,11 +9,13 @@
 #include <imgui_impl_opengl3.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <string_view>
+#include <thread>
 
 namespace {
 
@@ -220,10 +222,53 @@ int main(int argc, char** argv) {
                                                                               : imvideo::Source::file(argv[1]));
     imvideo::Options options;
     options.audio_sink = audio_sink;
-    player.open(source, options);
+    std::atomic<bool> open_done{false};
+    std::thread open_thread([&] {
+        player.open(source, options);
+        open_done = true;
+    });
 
     bool player_window_open = true;
+    float seek_position = 0.0F;
     WindowChromeState window_chrome;
+    while (!open_done && player_window_open && !glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        constexpr ImGuiWindowFlags window_flags =
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings;
+        if (ImGui::Begin("implayer", &player_window_open, window_flags))
+            ImGui::TextUnformatted(player.state() == imvideo::State::Error ? player.error().c_str()
+                                                                           : "Opening video...");
+        ImGui::End();
+        if (!player_window_open) glfwSetWindowShouldClose(window, GLFW_TRUE);
+        ImGui::Render();
+        int width = 0;
+        int height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        glViewport(0, 0, width, height);
+        glClearColor(0.08F, 0.08F, 0.1F, 1.0F);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        glfwSwapBuffers(window);
+    }
+    if (!open_done) player.close();
+    open_thread.join();
+    if (!player_window_open || glfwWindowShouldClose(window)) {
+        player.close();
+        renderer = {};
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 0;
+    }
+
     while (player_window_open && !glfwWindowShouldClose(window)) {
         glfwPollEvents();
         if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
@@ -274,12 +319,14 @@ int main(int argc, char** argv) {
 
             if (player.seekable()) {
                 ImGui::SameLine();
-                float position = static_cast<float>(player.position());
                 const float duration = static_cast<float>(player.duration());
+                const bool dragging_seek = ImGui::GetActiveID() == ImGui::GetID("##position");
+                if (!dragging_seek) seek_position = static_cast<float>(player.position());
                 char position_format[48]{};
                 std::snprintf(position_format, sizeof(position_format), "%%.1f / %.1f s", duration);
                 ImGui::SetNextItemWidth(-1.0F);
-                if (ImGui::SliderFloat("##position", &position, 0.0F, duration, position_format)) player.seek(position);
+                if (ImGui::SliderFloat("##position", &seek_position, 0.0F, duration, position_format))
+                    player.seek(seek_position);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback position");
             }
             ImGui::PopStyleVar();
@@ -318,6 +365,7 @@ int main(int argc, char** argv) {
     }
 
     player.close();
+    renderer = {};
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

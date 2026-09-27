@@ -76,7 +76,14 @@ if(IMVIDEO_BUILD_TESTS)
     )
     target_link_libraries(imvideo_component_tests PRIVATE imvideo::imvideo Catch2::Catch2WithMain)
     target_compile_definitions(imvideo_component_tests PRIVATE
-        IMVIDEO_TEST_IMAGE="${CMAKE_CURRENT_SOURCE_DIR}/tests/frame.xbm")
+        IMVIDEO_TEST_IMAGE="${CMAKE_CURRENT_SOURCE_DIR}/tests/frame.xbm"
+        IMVIDEO_TEST_CLIP="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/clip.mkv"
+        IMVIDEO_TEST_OFFSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/offset.ts"
+        IMVIDEO_TEST_WIDE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/wide.mkv"
+        IMVIDEO_TEST_ROTATED="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rotated.mkv")
+    if(WIN32)
+        target_link_libraries(imvideo_component_tests PRIVATE ws2_32)
+    endif()
     catch_discover_tests(imvideo_component_tests
         TEST_PREFIX "component: "
         PROPERTIES LABELS component TIMEOUT 10

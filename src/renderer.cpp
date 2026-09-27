@@ -3,6 +3,8 @@
 #include "frame_internal.hpp"
 
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <vector>
 
 #if defined(__APPLE__)
@@ -50,11 +52,24 @@ struct Renderer::Impl {
             input = software_frame;
         }
 
-        if (input->width <= 0 || input->height <= 0) return false;
+        if (input->width <= 0 || input->height <= 0 || input->width > 16384 || input->height > 16384) return false;
+        if (input->width > (std::numeric_limits<int>::max() / 4) / input->height) return false;
         const auto input_format = static_cast<AVPixelFormat>(input->format);
+        if (input_format == AV_PIX_FMT_RGBA) {
+            width = input->width;
+            height = input->height;
+            pixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+            for (int row = 0; row < height; ++row) {
+                std::memcpy(pixels.data() + static_cast<std::size_t>(row) * width * 4,
+                            input->data[0] + static_cast<std::size_t>(row) * input->linesize[0],
+                            static_cast<std::size_t>(width) * 4);
+            }
+            return upload();
+        }
         sws = sws_getCachedContext(sws, input->width, input->height, input_format, input->width, input->height,
                                    AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws) return false;
+        configure_colors(sws, input);
 
         width = input->width;
         height = input->height;
@@ -62,7 +77,30 @@ struct Renderer::Impl {
         std::uint8_t* output[] = {pixels.data()};
         int strides[] = {width * 4};
         if (sws_scale(sws, input->data, input->linesize, 0, height, output, strides) <= 0) return false;
+        return upload();
+    }
 
+    void configure_colors(SwsContext* scaler, const AVFrame* frame) const {
+        const auto format = static_cast<AVPixelFormat>(frame->format);
+        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
+        const bool rgb = descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
+        int source_range = rgb ? 1 : 0;
+        if (frame->color_range == AVCOL_RANGE_JPEG) source_range = 1;
+        if (frame->color_range == AVCOL_RANGE_MPEG) source_range = 0;
+        int space = frame->colorspace;
+        if (space == AVCOL_SPC_UNSPECIFIED || space == AVCOL_SPC_RGB)
+            space = frame->height > 576 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG;
+        const int* source = sws_getCoefficients(space);
+        const int* destination = sws_getCoefficients(SWS_CS_DEFAULT);
+        sws_setColorspaceDetails(scaler, source, source_range, destination, 1, 0, 1 << 16, 1 << 16);
+    }
+
+    bool upload() {
+        while (glGetError() != GL_NO_ERROR) {}
+        GLint previous_binding = 0;
+        GLint previous_alignment = 4;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_binding);
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &previous_alignment);
         if (texture_id == 0) {
             glGenTextures(1, &texture_id);
             glBindTexture(GL_TEXTURE_2D, texture_id);
@@ -81,7 +119,8 @@ struct Renderer::Impl {
         } else {
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
         }
-        glBindTexture(GL_TEXTURE_2D, 0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, previous_alignment);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_binding));
         return glGetError() == GL_NO_ERROR;
     }
 

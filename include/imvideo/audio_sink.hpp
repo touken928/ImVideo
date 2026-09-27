@@ -4,8 +4,16 @@
 
 namespace imvideo {
 
-// Optional audio destination. Calls are made from Player's decode thread;
-// Player retains shared ownership until close() finishes.
+// Optional audio destination. Player retains shared ownership until close()
+// finishes. open() and close() run on the control thread. write() and flush()
+// run on the decode thread. pause() and set_volume() may run concurrently with
+// those calls and must be thread-safe. Sink callbacks must not call into Player.
+//
+// When audio is open, clock_seconds() is the presentation master. It must
+// advance as audio is consumed and return to zero after flush(). A clock that
+// stays at zero holds video. clock_seconds() must be non-blocking. write()
+// should bound its own queue; Player also avoids writing more than about half
+// a second ahead of the clock.
 class AudioSink {
 public:
     virtual ~AudioSink() = default;

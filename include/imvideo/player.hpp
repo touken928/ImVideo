@@ -5,7 +5,7 @@
 #include <imvideo/source.hpp>
 
 #include <memory>
-#include <string_view>
+#include <string>
 
 namespace imvideo {
 
@@ -33,6 +33,8 @@ public:
     void play();
     void pause();
     void stop();
+    // Blocks until the demuxer accepts or rejects the request. Seconds are relative
+    // to the start of the input. Control methods must be called from one thread.
     bool seek(double seconds);
     bool set_speed(double speed);
 
@@ -47,7 +49,8 @@ public:
     void set_volume(float volume);
     [[nodiscard]] float volume() const noexcept;
     [[nodiscard]] bool audio_enabled() const noexcept;
-    [[nodiscard]] std::string_view error() const noexcept;
+    // A copy of the last error. Safe to keep after later open() or close() calls.
+    [[nodiscard]] std::string error() const;
 
 private:
     struct Impl;

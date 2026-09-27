@@ -35,7 +35,9 @@ struct MiniaudioSink::Impl {
         std::fill(destination + copied, destination + wanted, 0.0F);
         const float gain = self.volume.load(std::memory_order_relaxed);
         for (std::size_t index = 0; index < copied; ++index) destination[index] *= gain;
-        self.played_frames.fetch_add(frame_count, std::memory_order_relaxed);
+        // Silence must not move the master clock, or video runs ahead of the samples that arrive later.
+        if (self.channels != 0 && copied != 0)
+            self.played_frames.fetch_add(copied / self.channels, std::memory_order_relaxed);
     }
 
     ma_device device{};
@@ -84,6 +86,14 @@ void MiniaudioSink::write(const float* samples, std::size_t frames) {
     const auto count = frames * impl_->channels;
     std::lock_guard lock(impl_->mutex);
     impl_->buffer.insert(impl_->buffer.end(), samples, samples + count);
+    const auto max_samples = static_cast<std::size_t>(impl_->sample_rate) * impl_->channels;
+    if (max_samples == 0 || impl_->buffer.size() <= impl_->read_offset + max_samples) return;
+    const auto overflow = impl_->buffer.size() - (impl_->read_offset + max_samples);
+    impl_->read_offset += overflow;
+    if (impl_->read_offset >= impl_->buffer.size()) {
+        impl_->buffer.clear();
+        impl_->read_offset = 0;
+    }
 }
 
 void MiniaudioSink::pause(bool paused) {
