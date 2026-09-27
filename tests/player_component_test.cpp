@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -112,6 +113,71 @@ public:
     std::atomic<int> volume_calls{0};
 };
 
+class ControlledAudioSink final : public imvideo::AudioSink {
+public:
+    bool open(int sample_rate, int) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        sample_rate_ = sample_rate;
+        return sample_rate_ > 0;
+    }
+    void close() override {}
+    void write(const float*, std::size_t frames) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        written_frames_ += frames;
+        ++write_calls_;
+        ++generation_write_calls_;
+    }
+    void pause(bool) override {}
+    void flush() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        written_frames_ = 0;
+        consumed_frames_ = 0;
+        ++flush_calls_;
+        ++generation_;
+        generation_write_calls_ = 0;
+    }
+    void set_volume(float) override {}
+    [[nodiscard]] double clock_seconds() const noexcept override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return sample_rate_ > 0 ? static_cast<double>(consumed_frames_) / sample_rate_ : 0.0;
+    }
+
+    void consume_written_samples() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        consumed_frames_ = written_frames_;
+    }
+    [[nodiscard]] double written_seconds() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return sample_rate_ > 0 ? static_cast<double>(written_frames_) / sample_rate_ : 0.0;
+    }
+    [[nodiscard]] int write_calls() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return write_calls_;
+    }
+    [[nodiscard]] int flush_calls() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return flush_calls_;
+    }
+    [[nodiscard]] int generation() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return generation_;
+    }
+    [[nodiscard]] int generation_write_calls() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return generation_write_calls_;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    int sample_rate_ = 0;
+    int write_calls_ = 0;
+    int flush_calls_ = 0;
+    int generation_ = 0;
+    int generation_write_calls_ = 0;
+    std::size_t written_frames_ = 0;
+    std::size_t consumed_frames_ = 0;
+};
+
 } // namespace
 
 TEST_CASE("Player decodes a local image and retains the frame", "[player][decode]") {
@@ -131,6 +197,7 @@ TEST_CASE("Player decodes a local image and retains the frame", "[player][decode
     const auto retained = player.frame();
     REQUIRE(retained.width() == 8);
     REQUIRE(retained.height() == 8);
+    const auto retained_pts = retained.pts();
 
     player.close();
     REQUIRE(player.state() == imvideo::State::Idle);
@@ -138,6 +205,7 @@ TEST_CASE("Player decodes a local image and retains the frame", "[player][decode
     REQUIRE(retained);
     REQUIRE(retained.width() == 8);
     REQUIRE(retained.height() == 8);
+    REQUIRE(retained.pts() == retained_pts);
 }
 
 TEST_CASE("A video-only source does not open an audio sink", "[player][audio]") {
@@ -201,15 +269,28 @@ TEST_CASE("Opening a missing file reports an error", "[player][error]") {
 
 TEST_CASE("Close after pause returns and playback can restart", "[player][lifecycle]") {
     for (int attempt = 0; attempt < 25; ++attempt) {
-        imvideo::Player player;
-        imvideo::Options options;
-        options.autoplay = false;
-        REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_IMAGE), options));
-        player.play();
-        player.pause();
-        player.close();
-        REQUIRE(player.state() == imvideo::State::Idle);
+        imvideo::Player repeated;
+        imvideo::Options paused;
+        paused.autoplay = false;
+        REQUIRE(repeated.open(imvideo::Source::file(IMVIDEO_TEST_IMAGE), paused));
+        repeated.play();
+        repeated.pause();
+        repeated.close();
+        REQUIRE(repeated.state() == imvideo::State::Idle);
     }
+
+    imvideo::Player player;
+    imvideo::Options options;
+    options.autoplay = false;
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_IMAGE), options));
+    REQUIRE(player.state() == imvideo::State::Paused);
+    player.close();
+    REQUIRE(player.state() == imvideo::State::Idle);
+
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_IMAGE), options));
+    REQUIRE(player.state() == imvideo::State::Paused);
+    player.close();
+    REQUIRE(player.state() == imvideo::State::Idle);
 }
 
 TEST_CASE("Playback reaches the end of a finite clip", "[player][timeline]") {
@@ -222,6 +303,62 @@ TEST_CASE("Playback reaches the end of a finite clip", "[player][timeline]") {
     UNSCOPED_INFO("position=" << player.position() << " duration=" << player.duration());
     // The last frame PTS is one frame before the container duration.
     REQUIRE(player.position() + 0.12 >= player.duration());
+}
+
+TEST_CASE("Closing an ended player permits reopening", "[player][lifecycle]") {
+    imvideo::Player player;
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP)));
+    REQUIRE(wait_until([&player] { return player.state() == imvideo::State::Ended; }, std::chrono::seconds(5)));
+
+    player.close();
+    REQUIRE(player.state() == imvideo::State::Idle);
+    REQUIRE_FALSE(player.frame());
+    imvideo::Options still_options;
+    still_options.autoplay = false;
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_IMAGE), still_options));
+    REQUIRE(player.state() == imvideo::State::Paused);
+    player.play();
+    REQUIRE(wait_until([&player] { return static_cast<bool>(player.frame()); }));
+    player.close();
+    REQUIRE(player.state() == imvideo::State::Idle);
+}
+
+TEST_CASE("Changing speed at a seeked position while paused is retained on resume", "[player][speed][timeline]") {
+    imvideo::Options options;
+    options.autoplay = false;
+    imvideo::Player player;
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP), options));
+    REQUIRE(player.seek(1.0));
+    REQUIRE(player.state() == imvideo::State::Paused);
+    REQUIRE(player.position() == 1.0);
+    player.play();
+    REQUIRE(wait_until([&player] { return static_cast<bool>(player.frame()); }));
+    REQUIRE(player.position() >= 0.8);
+    REQUIRE(player.position() < 1.6);
+    player.pause();
+    REQUIRE(player.state() == imvideo::State::Paused);
+    const auto paused_frame = player.frame();
+    REQUIRE(paused_frame);
+    const auto paused_pts = paused_frame.pts();
+    const auto paused_position = player.position();
+    REQUIRE(player.can_set_speed());
+    REQUIRE(player.set_speed(2.0));
+    REQUIRE(player.speed() == 2.0);
+
+    player.play();
+    REQUIRE(player.state() == imvideo::State::Playing);
+    REQUIRE(player.speed() == 2.0);
+    const bool advanced = wait_until(
+        [&player, paused_pts, paused_position] {
+            const auto frame = player.frame();
+            return frame && frame.pts() > paused_pts && player.position() > paused_position;
+        },
+        std::chrono::seconds(1));
+    UNSCOPED_INFO("paused pts=" << paused_pts << " position=" << paused_position
+                                << "; resumed pts=" << player.frame().pts()
+                                << " position=" << player.position());
+    REQUIRE(advanced);
+    player.close();
 }
 
 TEST_CASE("Seek presents the requested media time", "[player][timeline]") {
@@ -293,6 +430,51 @@ TEST_CASE("Video does not run ahead of a stalled audio clock", "[player][sync]")
     REQUIRE(player.position() < 0.3);
     player.close();
     REQUIRE(player.state() == imvideo::State::Idle);
+}
+
+TEST_CASE("Changing speed flushes queued audio and follows newly consumed samples", "[player][speed][sync]") {
+    for (const double speed : {0.5, 2.0}) {
+        auto sink = std::make_shared<ControlledAudioSink>();
+        imvideo::Options options;
+        options.audio_sink = sink;
+        imvideo::Player player;
+        REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP), options));
+        REQUIRE(player.audio_enabled());
+        REQUIRE(player.can_set_speed());
+
+        // Holding the sample clock at zero lets the decoder fill its bounded lead.
+        REQUIRE(wait_until([&sink] { return sink->written_seconds() >= 0.45; }));
+        const int old_generation = sink->generation();
+        const int old_writes = sink->write_calls();
+        const double old_position = player.position();
+
+        REQUIRE(player.set_speed(speed));
+        REQUIRE(player.speed() == speed);
+        REQUIRE(wait_until([&sink, old_generation] {
+            return sink->generation() > old_generation && sink->generation_write_calls() > 0;
+        }));
+        const int speed_generation = sink->generation();
+        const int post_flush_writes = sink->generation_write_calls();
+        REQUIRE(speed_generation > old_generation);
+        REQUIRE(post_flush_writes > 0);
+
+        // The sink clock advances only by frames actually delivered through write().
+        // Keep releasing queued audio in bounded increments so short clips and the
+        // player's lead limiter cannot leave this test waiting for wall-clock time.
+        const bool progressed = wait_until([&] {
+            sink->consume_written_samples();
+            return player.position() > old_position;
+        }, std::chrono::seconds(3));
+        UNSCOPED_INFO("speed=" << speed << " old position=" << old_position
+                               << " new position=" << player.position()
+                               << " generation=" << speed_generation
+                               << " writes before=" << old_writes
+                               << " writes after=" << post_flush_writes);
+        REQUIRE(progressed);
+        REQUIRE(sink->generation() == speed_generation);
+        REQUIRE(sink->write_calls() >= post_flush_writes);
+        player.close();
+    }
 }
 
 TEST_CASE("close() cancels an open that is blocked in another thread", "[player][lifecycle]") {

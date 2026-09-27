@@ -8,10 +8,7 @@ extern "C" {
 
 struct AVStream;
 struct SwsContext;
-
 namespace imvideo {
-
-void configure_scaler_colors(SwsContext* scaler, const AVFrame* frame);
 
 // Converts a decoded frame to RGBA in display orientation. The caller owns the result.
 class DisplayConverter {

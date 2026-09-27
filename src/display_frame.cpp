@@ -26,24 +26,42 @@ int normalize_rotation(double angle) {
     return 0;
 }
 
-int rotation_from_matrix(const std::uint8_t* data, std::size_t size) {
-    if (!data || size < 9 * sizeof(std::int32_t)) return 0;
-    const auto angle = av_display_rotation_get(reinterpret_cast<const std::int32_t*>(data));
+void configure_scaler_colors(SwsContext* scaler, const AVFrame* frame) {
+    const auto format = static_cast<AVPixelFormat>(frame->format);
+    const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
+    const bool rgb = descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
+    int source_range = rgb ? 1 : 0;
+    if (frame->color_range == AVCOL_RANGE_JPEG) source_range = 1;
+    if (frame->color_range == AVCOL_RANGE_MPEG) source_range = 0;
+    int space = frame->colorspace;
+    if (space == AVCOL_SPC_UNSPECIFIED || space == AVCOL_SPC_RGB)
+        space = frame->height > 576 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG;
+    const int* source = sws_getCoefficients(space);
+    const int* destination = sws_getCoefficients(SWS_CS_DEFAULT);
+    sws_setColorspaceDetails(scaler, source, source_range, destination, 1, 0, 1 << 16, 1 << 16);
+}
+
+bool rotation_from_matrix(const std::uint8_t* data, std::size_t size, int& rotation) {
+    if (!data || size < 9 * sizeof(std::int32_t)) return false;
+    std::int32_t matrix[9];
+    std::memcpy(matrix, data, sizeof(matrix));
+    const auto angle = av_display_rotation_get(matrix);
     // The matrix angle is counterclockwise. Metadata and display use clockwise degrees.
-    return normalize_rotation(-angle);
+    rotation = normalize_rotation(-angle);
+    return true;
 }
 
 int display_rotation_degrees(const AVFrame* frame, const AVStream* stream) {
     if (const AVFrameSideData* side = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX)) {
-        const int rotation = rotation_from_matrix(side->data, side->size);
-        if (rotation != 0) return rotation;
+        int rotation = 0;
+        if (rotation_from_matrix(side->data, side->size, rotation)) return rotation;
     }
     if (stream && stream->codecpar) {
         for (int index = 0; index < stream->codecpar->nb_coded_side_data; ++index) {
             const AVPacketSideData& data = stream->codecpar->coded_side_data[index];
             if (data.type != AV_PKT_DATA_DISPLAYMATRIX) continue;
-            const int rotation = rotation_from_matrix(data.data, data.size);
-            if (rotation != 0) return rotation;
+            int rotation = 0;
+            if (rotation_from_matrix(data.data, data.size, rotation) && rotation != 0) return rotation;
         }
     }
     if (stream) {
@@ -78,21 +96,6 @@ void rotate_rgba(const std::uint8_t* source, int source_width, int source_height
 }
 
 } // namespace
-
-void configure_scaler_colors(SwsContext* scaler, const AVFrame* frame) {
-    const auto format = static_cast<AVPixelFormat>(frame->format);
-    const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
-    const bool rgb = descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
-    int source_range = rgb ? 1 : 0;
-    if (frame->color_range == AVCOL_RANGE_JPEG) source_range = 1;
-    if (frame->color_range == AVCOL_RANGE_MPEG) source_range = 0;
-    int space = frame->colorspace;
-    if (space == AVCOL_SPC_UNSPECIFIED || space == AVCOL_SPC_RGB)
-        space = frame->height > 576 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG;
-    const int* source = sws_getCoefficients(space);
-    const int* destination = sws_getCoefficients(SWS_CS_DEFAULT);
-    sws_setColorspaceDetails(scaler, source, source_range, destination, 1, 0, 1 << 16, 1 << 16);
-}
 
 DisplayConverter::~DisplayConverter() { reset(); }
 

@@ -4,14 +4,12 @@
 
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <vector>
 
 #if defined(__APPLE__)
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #elif defined(_WIN32)
-// windows.h defines min/max macros that break std::numeric_limits<int>::max.
 #define NOMINMAX
 #include <windows.h>
 #define GL_GLEXT_PROTOTYPES
@@ -21,6 +19,43 @@
 #include <GL/gl.h>
 #endif
 
+// These unpack-state enums and pixel buffer objects postdate the Windows SDK's
+// OpenGL 1.1 header. Define their specified values without requiring glext.h.
+#ifndef GL_UNPACK_ROW_LENGTH
+#define GL_UNPACK_ROW_LENGTH 0x0CF2
+#endif
+#ifndef GL_UNPACK_SKIP_ROWS
+#define GL_UNPACK_SKIP_ROWS 0x0CF3
+#endif
+#ifndef GL_UNPACK_SKIP_PIXELS
+#define GL_UNPACK_SKIP_PIXELS 0x0CF4
+#endif
+#ifndef GL_PIXEL_UNPACK_BUFFER
+#define GL_PIXEL_UNPACK_BUFFER 0x88EC
+#endif
+#ifndef GL_PIXEL_UNPACK_BUFFER_BINDING
+#define GL_PIXEL_UNPACK_BUFFER_BINDING 0x88EF
+#endif
+
+#if defined(_WIN32)
+using BindBufferProc = void(APIENTRY*)(GLenum, GLuint);
+
+BindBufferProc get_bind_buffer_proc() {
+    auto proc = reinterpret_cast<BindBufferProc>(wglGetProcAddress("glBindBuffer"));
+    if (proc == nullptr || proc == reinterpret_cast<BindBufferProc>(1) ||
+        proc == reinterpret_cast<BindBufferProc>(2) || proc == reinterpret_cast<BindBufferProc>(3) ||
+        proc == reinterpret_cast<BindBufferProc>(-1)) {
+        return nullptr;
+    }
+    return proc;
+}
+#else
+using BindBufferProc = void(*)(GLenum, GLuint);
+extern "C" void glBindBuffer(GLenum, GLuint);
+
+BindBufferProc get_bind_buffer_proc() { return &glBindBuffer; }
+#endif
+
 // The Windows SDK ships an OpenGL 1.1 header, while this core enum was added
 // in OpenGL 1.2.  Keep the public renderer compatible with that system header.
 #ifndef GL_CLAMP_TO_EDGE
@@ -28,10 +63,7 @@
 #endif
 
 extern "C" {
-#include <libavutil/hwcontext.h>
-#include <libavutil/pixdesc.h>
 #include <libavutil/pixfmt.h>
-#include <libswscale/swscale.h>
 }
 
 namespace imvideo {
@@ -39,85 +71,92 @@ namespace imvideo {
 struct Renderer::Impl {
     ~Impl() {
         if (texture_id != 0) glDeleteTextures(1, &texture_id);
-        sws_freeContext(sws);
-        av_frame_free(&software_frame);
     }
 
     bool update(AVFrame* source) {
-        AVFrame* input = source;
-        const auto format = static_cast<AVPixelFormat>(source->format);
-        const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
-        if (descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_HWACCEL) != 0) {
-            if (!software_frame) software_frame = av_frame_alloc();
-            av_frame_unref(software_frame);
-            if (av_hwframe_transfer_data(software_frame, source, 0) < 0) return false;
-            input = software_frame;
-        }
+        if (!source || source->format != AV_PIX_FMT_RGBA || source->width <= 0 || source->height <= 0 ||
+            source->width > 16384 || source->height > 16384)
+            return false;
+        if (!source->data[0] || source->linesize[0] < source->width * 4)
+            return false;
 
-        if (input->width <= 0 || input->height <= 0 || input->width > 16384 || input->height > 16384) return false;
-        if (input->width > (std::numeric_limits<int>::max() / 4) / input->height) return false;
-        const auto input_format = static_cast<AVPixelFormat>(input->format);
-        if (input_format == AV_PIX_FMT_RGBA) {
-            width = input->width;
-            height = input->height;
-            pixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
-            for (int row = 0; row < height; ++row) {
-                std::memcpy(pixels.data() + static_cast<std::size_t>(row) * width * 4,
-                            input->data[0] + static_cast<std::size_t>(row) * input->linesize[0],
-                            static_cast<std::size_t>(width) * 4);
-            }
-            return upload();
+        const int next_width = source->width;
+        const int next_height = source->height;
+        pixels.resize(static_cast<std::size_t>(next_width) * static_cast<std::size_t>(next_height) * 4);
+        for (int row = 0; row < next_height; ++row) {
+            std::memcpy(pixels.data() + static_cast<std::size_t>(row) * next_width * 4,
+                        source->data[0] + static_cast<std::size_t>(row) * source->linesize[0],
+                        static_cast<std::size_t>(next_width) * 4);
         }
-        sws = sws_getCachedContext(sws, input->width, input->height, input_format, input->width, input->height,
-                                   AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
-        if (!sws) return false;
-        configure_scaler_colors(sws, input);
-
-        width = input->width;
-        height = input->height;
-        pixels.resize(static_cast<std::size_t>(width) * height * 4);
-        std::uint8_t* output[] = {pixels.data()};
-        int strides[] = {width * 4};
-        if (sws_scale(sws, input->data, input->linesize, 0, height, output, strides) <= 0) return false;
-        return upload();
+        if (!upload(next_width, next_height)) return false;
+        width = next_width;
+        height = next_height;
+        return true;
     }
 
-    bool upload() {
+    bool upload(int upload_width, int upload_height) {
         while (glGetError() != GL_NO_ERROR) {}
+        const BindBufferProc bind_buffer = get_bind_buffer_proc();
+        if (!bind_buffer) return false;
         GLint previous_binding = 0;
         GLint previous_alignment = 4;
+        GLint previous_row_length = 0;
+        GLint previous_skip_rows = 0;
+        GLint previous_skip_pixels = 0;
+        GLint previous_unpack_buffer = 0;
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_binding);
         glGetIntegerv(GL_UNPACK_ALIGNMENT, &previous_alignment);
-        if (texture_id == 0) {
-            glGenTextures(1, &texture_id);
+        glGetIntegerv(GL_UNPACK_ROW_LENGTH, &previous_row_length);
+        glGetIntegerv(GL_UNPACK_SKIP_ROWS, &previous_skip_rows);
+        glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &previous_skip_pixels);
+        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &previous_unpack_buffer);
+        bind_buffer(GL_PIXEL_UNPACK_BUFFER, 0);
+
+        const bool create_texture = texture_id == 0;
+        if (create_texture) glGenTextures(1, &texture_id);
+        if (texture_id != 0) {
             glBindTexture(GL_TEXTURE_2D, texture_id);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        } else {
-            glBindTexture(GL_TEXTURE_2D, texture_id);
+            if (create_texture) {
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            }
         }
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        if (allocated_width != width || allocated_height != height) {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            allocated_width = width;
-            allocated_height = height;
-        } else {
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+        if (texture_id != 0) {
+            if (upload_width == width && upload_height == height) {
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, upload_width, upload_height, GL_RGBA,
+                                GL_UNSIGNED_BYTE, pixels.data());
+            } else {
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, upload_width, upload_height, 0, GL_RGBA,
+                             GL_UNSIGNED_BYTE, pixels.data());
+            }
         }
+        const bool uploaded = texture_id != 0 && glGetError() == GL_NO_ERROR;
         glPixelStorei(GL_UNPACK_ALIGNMENT, previous_alignment);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, previous_row_length);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, previous_skip_rows);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, previous_skip_pixels);
+        bind_buffer(GL_PIXEL_UNPACK_BUFFER, static_cast<GLuint>(previous_unpack_buffer));
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_binding));
-        return glGetError() == GL_NO_ERROR;
+        if (!uploaded) {
+            if (create_texture && texture_id != 0) {
+                glDeleteTextures(1, &texture_id);
+                texture_id = 0;
+            }
+            while (glGetError() != GL_NO_ERROR) {}
+            return false;
+        }
+        return true;
     }
 
     GLuint texture_id = 0;
     int width = 0;
     int height = 0;
-    int allocated_width = 0;
-    int allocated_height = 0;
-    SwsContext* sws = nullptr;
-    AVFrame* software_frame = nullptr;
     std::vector<std::uint8_t> pixels;
 };
 
