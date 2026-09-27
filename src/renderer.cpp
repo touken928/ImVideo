@@ -11,6 +11,8 @@
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #elif defined(_WIN32)
+// windows.h defines min/max macros that break std::numeric_limits<int>::max.
+#define NOMINMAX
 #include <windows.h>
 #define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
