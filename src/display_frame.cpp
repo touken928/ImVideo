@@ -1,3 +1,4 @@
+#include "ffmpeg_raii.hpp"
 #include "frame_internal.hpp"
 
 #include <algorithm>
@@ -5,12 +6,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <limits>
-#include <vector>
 
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
@@ -30,7 +30,7 @@ void configure_scaler_colors(SwsContext* scaler, const AVFrame* frame) {
     const auto format = static_cast<AVPixelFormat>(frame->format);
     const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(format);
     const bool rgb = descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB) != 0;
-    int source_range = rgb ? 1 : 0;
+    int source_range = rgb || format == AV_PIX_FMT_YUVJ420P ? 1 : 0;
     if (frame->color_range == AVCOL_RANGE_JPEG) source_range = 1;
     if (frame->color_range == AVCOL_RANGE_MPEG) source_range = 0;
     int space = frame->colorspace;
@@ -102,57 +102,123 @@ DisplayConverter::~DisplayConverter() { reset(); }
 void DisplayConverter::reset() {
     sws_freeContext(sws_);
     sws_ = nullptr;
+    av_buffer_pool_uninit(&rgba_pool_);
+    pool_size_ = 0;
+    source_width_ = source_height_ = scaled_width_ = scaled_height_ = 0;
+    source_format_ = color_space_ = color_range_ = -1;
+    rotated_pixels_.clear();
 }
 
-AVFrame* DisplayConverter::convert(const AVFrame* source, const AVStream* stream) {
+AVFrame* DisplayConverter::convert(const AVFrame* source, const AVStream* stream, bool prefer_gpu,
+                                   DisplayGeometry* geometry) {
     if (!source || source->width <= 0 || source->height <= 0) return nullptr;
     int scaled_width = source->width;
     int scaled_height = source->height;
     AVRational sar = source->sample_aspect_ratio;
     if ((sar.num <= 0 || sar.den <= 0) && stream) sar = stream->sample_aspect_ratio;
-    if (sar.num > 0 && sar.den > 0 && sar.num != sar.den)
-        scaled_width = std::max(1, static_cast<int>(av_rescale(source->width, sar.num, sar.den)));
+    if (sar.num > 0 && sar.den > 0 && sar.num != sar.den) {
+        const auto width = std::max<std::int64_t>(1, av_rescale(source->width, sar.num, sar.den));
+        if (width > maximum_display_dimension) return nullptr;
+        scaled_width = static_cast<int>(width);
+    }
     const int rotation = display_rotation_degrees(source, stream);
     const bool swap_axes = rotation == 90 || rotation == 270;
     const int output_width = swap_axes ? scaled_height : scaled_width;
     const int output_height = swap_axes ? scaled_width : scaled_height;
-    if (output_width > 16384 || output_height > 16384) return nullptr;
-    if (scaled_width > (std::numeric_limits<int>::max() / 4) / std::max(scaled_height, 1)) return nullptr;
+    if (output_width > maximum_display_dimension || output_height > maximum_display_dimension) return nullptr;
+#if defined(__EMSCRIPTEN__)
+    if (static_cast<std::int64_t>(output_width) * output_height > maximum_web_pixels) return nullptr;
+#endif
+    const DisplayGeometry display{output_width, output_height, rotation};
+#if defined(__EMSCRIPTEN__)
+    const auto format = static_cast<AVPixelFormat>(source->format);
+    const bool supported_color = source->colorspace == AVCOL_SPC_UNSPECIFIED || source->colorspace == AVCOL_SPC_BT709 ||
+                                 source->colorspace == AVCOL_SPC_BT470BG || source->colorspace == AVCOL_SPC_SMPTE170M;
+    if (prefer_gpu && supported_color && scaled_width == source->width && source->width % 2 == 0 &&
+        source->height % 2 == 0 && (format == AV_PIX_FMT_YUV420P || format == AV_PIX_FMT_YUVJ420P)) {
+        bool valid = true;
+        for (int plane = 0; plane < 3; ++plane) {
+            const int width = plane == 0 ? source->width : (source->width + 1) / 2;
+            valid = valid && source->data[plane] && source->linesize[plane] >= width;
+        }
+        if (valid) {
+            AVFrame* retained = av_frame_clone(source);
+            if (retained && geometry) *geometry = display;
+            return retained;
+        }
+    }
+#else
+    (void)prefer_gpu;
+#endif
+    AVFrame* output = rgba(source, display);
+    if (output && geometry) *geometry = {output_width, output_height, 0};
+    return output;
+}
 
-    sws_ = sws_getCachedContext(sws_, source->width, source->height, static_cast<AVPixelFormat>(source->format),
-                                scaled_width, scaled_height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+AVFrame* DisplayConverter::rgba(const AVFrame* source, const DisplayGeometry& geometry) {
+    if (!source || geometry.width <= 0 || geometry.height <= 0) return nullptr;
+    const int rotation = geometry.rotation;
+    const bool swap_axes = rotation == 90 || rotation == 270;
+    const int scaled_width = swap_axes ? geometry.height : geometry.width;
+    const int scaled_height = swap_axes ? geometry.width : geometry.height;
+    const bool changed = !sws_ || source_width_ != source->width || source_height_ != source->height ||
+                         scaled_width_ != scaled_width || scaled_height_ != scaled_height ||
+                         source_format_ != source->format;
+
+    // FFmpeg can normalize formats/flags internally (YUVJ and odd dimensions).
+    // Querying its cache again can recreate the context and lose configured
+    // colors even when our input is unchanged. Track the requested shape here.
+    if (changed)
+        sws_ =
+            sws_getCachedContext(sws_, source->width, source->height, static_cast<AVPixelFormat>(source->format),
+                                 scaled_width, scaled_height, AV_PIX_FMT_RGBA, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (!sws_) return nullptr;
-    configure_scaler_colors(sws_, source);
+    if (changed || color_space_ != source->colorspace || color_range_ != source->color_range) {
+        configure_scaler_colors(sws_, source);
+        source_width_ = source->width;
+        source_height_ = source->height;
+        scaled_width_ = scaled_width;
+        scaled_height_ = scaled_height;
+        source_format_ = source->format;
+        color_space_ = source->colorspace;
+        color_range_ = source->color_range;
+    }
 
-    AVFrame* output = av_frame_alloc();
+    auto output = make_av_frame();
     if (!output) return nullptr;
     output->format = AV_PIX_FMT_RGBA;
-    output->width = output_width;
-    output->height = output_height;
-    if (av_frame_get_buffer(output, 32) < 0) {
-        av_frame_free(&output);
+    output->width = geometry.width;
+    output->height = geometry.height;
+    const int bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, output->width, output->height, 32);
+    if (bytes <= 0) { return nullptr; }
+    if (!rgba_pool_ || pool_size_ != bytes) {
+        av_buffer_pool_uninit(&rgba_pool_);
+        rgba_pool_ = av_buffer_pool_init(static_cast<std::size_t>(bytes), nullptr);
+        pool_size_ = bytes;
+    }
+    output->buf[0] = rgba_pool_ ? av_buffer_pool_get(rgba_pool_) : nullptr;
+    if (!output->buf[0] || av_image_fill_arrays(output->data, output->linesize, output->buf[0]->data, AV_PIX_FMT_RGBA,
+                                                output->width, output->height, 32) < 0) {
         return nullptr;
     }
     if (rotation == 0) {
         std::uint8_t* destination[] = {output->data[0]};
         int strides[] = {output->linesize[0]};
         if (sws_scale(sws_, source->data, source->linesize, 0, source->height, destination, strides) <= 0) {
-            av_frame_free(&output);
             return nullptr;
         }
-        return output;
+        return output.release();
     }
 
-    std::vector<std::uint8_t> scaled(static_cast<std::size_t>(scaled_width) * scaled_height * 4);
-    std::uint8_t* destination[] = {scaled.data()};
+    rotated_pixels_.resize(static_cast<std::size_t>(scaled_width) * scaled_height * 4);
+    std::uint8_t* destination[] = {rotated_pixels_.data()};
     int strides[] = {scaled_width * 4};
     if (sws_scale(sws_, source->data, source->linesize, 0, source->height, destination, strides) <= 0) {
-        av_frame_free(&output);
         return nullptr;
     }
-    rotate_rgba(scaled.data(), scaled_width, scaled_height, scaled_width * 4, output->data[0], output->linesize[0],
-                rotation);
-    return output;
+    rotate_rgba(rotated_pixels_.data(), scaled_width, scaled_height, scaled_width * 4, output->data[0],
+                output->linesize[0], rotation);
+    return output.release();
 }
 
 } // namespace imvideo

@@ -4,5 +4,6 @@
 /example/implayer/build-decoupled/
 /CMakeUserPresets.json
 /example/implayer/CMakeUserPresets.json
+__pycache__/
 .DS_Store
 imgui.ini

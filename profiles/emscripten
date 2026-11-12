@@ -1,0 +1,27 @@
+{% set emsdk = os.getenv("EMSDK") %}
+{% if not emsdk %}
+{{ raise_exception("Activate emsdk 4.0.10 before using this profile") }}
+{% endif %}
+[settings]
+os=Emscripten
+arch=wasm
+compiler=emcc
+compiler.version=4.0.10
+compiler.libcxx=libc++
+compiler.cppstd=17
+compiler.threads=posix
+build_type=Release
+
+[conf]
+tools.build:compiler_executables={"c":"{{ emsdk }}/upstream/emscripten/emcc","cpp":"{{ emsdk }}/upstream/emscripten/em++"}
+tools.cmake.cmaketoolchain:user_toolchain=["{{ emsdk }}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake"]
+tools.build:skip_test=True
+tools.build:cxxflags=["-fexceptions"]
+
+[buildenv]
+CC={{ emsdk }}/upstream/emscripten/emcc
+CXX={{ emsdk }}/upstream/emscripten/em++
+AR={{ emsdk }}/upstream/emscripten/emar
+RANLIB={{ emsdk }}/upstream/emscripten/emranlib
+NM={{ emsdk }}/upstream/bin/llvm-nm
+STRIP={{ emsdk }}/upstream/bin/llvm-strip

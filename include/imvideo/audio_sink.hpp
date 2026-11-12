@@ -5,7 +5,7 @@
 namespace imvideo {
 
 // Optional audio destination. Player retains shared ownership until close()
-// finishes. open() and close() run on the control thread. write() and flush()
+// finishes. open() and close() run on the control thread. write(), flush(), and drain()
 // run on the decode thread. pause() and set_volume() may run concurrently with
 // those calls and must be thread-safe. Sink callbacks must not call into Player.
 //
@@ -23,6 +23,9 @@ public:
     virtual void write(const float* samples, std::size_t frames) = 0;
     virtual void pause(bool paused) = 0;
     virtual void flush() = 0;
+    // At end of input, emit samples held by a sink-side converter. Do not wait
+    // for device consumption here; non-live playback waits on clock_seconds().
+    virtual void drain() {}
     virtual void set_volume(float volume) = 0;
     [[nodiscard]] virtual double clock_seconds() const noexcept = 0;
 };

@@ -13,6 +13,10 @@ public:
     [[nodiscard]] int width() const noexcept;
     [[nodiscard]] int height() const noexcept;
     [[nodiscard]] std::int64_t pts() const noexcept;
+    // Handle identity: copies of one decoded frame compare equal, regardless
+    // of timestamps. Distinct decoded frames do not compare their pixel data.
+    [[nodiscard]] bool operator==(const Frame& other) const noexcept;
+    [[nodiscard]] bool operator!=(const Frame& other) const noexcept;
 
 private:
     struct Impl;

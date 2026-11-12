@@ -37,6 +37,12 @@ TEST_CASE("Player clamps volume to the supported range", "[player][control]") {
 
     player.set_volume(2.0F);
     REQUIRE_THAT(player.volume(), WithinAbs(1.0F, 1e-6));
+
+    player.set_volume(std::numeric_limits<float>::quiet_NaN());
+    REQUIRE_THAT(player.volume(), WithinAbs(0.0F, 1e-6));
+
+    player.set_volume(std::numeric_limits<float>::infinity());
+    REQUIRE_THAT(player.volume(), WithinAbs(1.0F, 1e-6));
 }
 
 TEST_CASE("Playback controls are inert before a source is open", "[player][control]") {

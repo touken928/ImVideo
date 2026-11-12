@@ -1,4 +1,5 @@
 from conan import ConanFile
+from conan.errors import ConanInvalidConfiguration
 from conan.tools.build import can_run
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
 from conan.tools.files import copy
@@ -49,7 +50,7 @@ class ImvideoConan(ConanFile):
 
     def build_requirements(self):
         skip_tests = self.conf.get("tools.build:skip_test", default=False, check_type=bool)
-        if not skip_tests and can_run(self):
+        if self.settings.os != "Emscripten" and not skip_tests and can_run(self):
             self.test_requires("catch2/3.8.1")
 
     def system_requirements(self):
@@ -78,6 +79,25 @@ class ImvideoConan(ConanFile):
             self.options["ffmpeg"].with_avfoundation = False
         elif self.settings.os == "Windows":
             self.options["ffmpeg"].with_ssl = False
+        elif self.settings.os == "Emscripten":
+            self.options["ffmpeg"].shared = False
+            self.options["ffmpeg"].with_asm = False
+            self.options["ffmpeg"].with_zlib = False
+            self.options["ffmpeg"].with_ssl = False
+            self.options["ffmpeg"].with_vulkan = False
+            self.options["ffmpeg"].disable_everything = True
+            self.options["ffmpeg"].enable_decoders = "h264,aac,mpeg4,ffv1,pcm_s16le,xbm"
+            self.options["ffmpeg"].enable_demuxers = "mov,matroska,image2,image2pipe,mpegts"
+            self.options["ffmpeg"].enable_parsers = "h264,aac,mpeg4video"
+            self.options["ffmpeg"].enable_protocols = "file"
+            self.options["ffmpeg"].enable_filters = "abuffer,abuffersink,atempo,aresample,aformat"
+
+    def validate(self):
+        if self.settings.os == "Emscripten":
+            if self.options.shared:
+                raise ConanInvalidConfiguration("Emscripten requires shared=False")
+            if self.settings.compiler.get_safe("threads") != "posix":
+                raise ConanInvalidConfiguration("Emscripten requires compiler.threads=posix")
 
     def layout(self):
         cmake_layout(self)
@@ -87,7 +107,9 @@ class ImvideoConan(ConanFile):
         deps.generate()
         toolchain = CMakeToolchain(self, generator="Ninja")
         skip_tests = self.conf.get("tools.build:skip_test", default=False, check_type=bool)
-        toolchain.variables["IMVIDEO_BUILD_TESTS"] = not skip_tests and can_run(self)
+        toolchain.variables["IMVIDEO_BUILD_TESTS"] = (
+            self.settings.os != "Emscripten" and not skip_tests and can_run(self)
+        )
         toolchain.generate()
 
     def build(self):
@@ -95,7 +117,7 @@ class ImvideoConan(ConanFile):
         cmake.configure()
         cmake.build()
         skip_tests = self.conf.get("tools.build:skip_test", default=False, check_type=bool)
-        if not skip_tests and can_run(self):
+        if self.settings.os != "Emscripten" and not skip_tests and can_run(self):
             cmake.ctest(cli_args=["--output-on-failure"])
 
     def package(self):
@@ -110,3 +132,8 @@ class ImvideoConan(ConanFile):
             self.cpp_info.frameworks = ["OpenGL"]
         elif self.settings.os == "Linux":
             self.cpp_info.system_libs = ["GL"]
+        elif self.settings.os == "Emscripten":
+            self.cpp_info.cxxflags = ["-pthread", "-fexceptions"]
+            self.cpp_info.exelinkflags = [
+                "-pthread", "-fexceptions", "-sMIN_WEBGL_VERSION=2", "-sMAX_WEBGL_VERSION=2"
+            ]

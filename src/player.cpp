@@ -1,34 +1,35 @@
 #include <imvideo/player.hpp>
 
+#include "audio_pipeline.hpp"
+#include "ffmpeg_raii.hpp"
 #include "frame_internal.hpp"
+#include "packet_queue.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
-#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdint>
-#include <cstdio>
-#include <deque>
-#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
-#include <vector>
+
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/threading.h>
+#if !defined(__EMSCRIPTEN_PTHREADS__)
+#error "imvideo requires Emscripten pthreads"
+#endif
+#endif
 
 extern "C" {
 #include <libavcodec/avcodec.h>
-#include <libavfilter/avfilter.h>
-#include <libavfilter/buffersink.h>
-#include <libavfilter/buffersrc.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/hwcontext.h>
-#include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
-#include <libswresample/swresample.h>
 }
 
 namespace imvideo {
@@ -37,6 +38,20 @@ namespace {
 constexpr double minimum_speed = 0.25;
 constexpr double maximum_speed = 4.0;
 constexpr double discard_slack_seconds = 0.0005;
+constexpr double audio_drain_slack_seconds = 0.0001;
+constexpr double audio_sync_lead_seconds = 0.04;
+constexpr double maximum_video_lag_seconds = 0.08;
+constexpr double audio_prefetch_lead_seconds = 0.12;
+constexpr double maximum_audio_lead_seconds = 0.5;
+constexpr auto audio_drain_poll_interval = std::chrono::milliseconds(5);
+constexpr auto audio_lead_poll_interval = std::chrono::milliseconds(10);
+constexpr auto video_reanchor_lag = std::chrono::milliseconds(50);
+#if defined(__EMSCRIPTEN__)
+// Keep audio-clock presentation jitter below a browser refresh interval.
+constexpr auto audio_clock_poll_interval = std::chrono::milliseconds(2);
+#else
+constexpr auto audio_clock_poll_interval = std::chrono::milliseconds(10);
+#endif
 
 std::string ffmpeg_error(int code) {
     char buffer[AV_ERROR_MAX_STRING_SIZE]{};
@@ -44,13 +59,15 @@ std::string ffmpeg_error(int code) {
     return buffer;
 }
 
-std::vector<AVHWDeviceType> hardware_candidates() {
-#if defined(_WIN32)
-    return {AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2};
+constexpr auto hardware_candidates() noexcept {
+#if defined(__EMSCRIPTEN__)
+    return std::array<AVHWDeviceType, 0>{};
+#elif defined(_WIN32)
+    return std::array{AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2};
 #elif defined(__APPLE__)
-    return {AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
+    return std::array{AV_HWDEVICE_TYPE_VIDEOTOOLBOX};
 #else
-    return {AV_HWDEVICE_TYPE_VAAPI, AV_HWDEVICE_TYPE_CUDA};
+    return std::array{AV_HWDEVICE_TYPE_VAAPI, AV_HWDEVICE_TYPE_CUDA};
 #endif
 }
 
@@ -74,215 +91,6 @@ struct PresentationClock {
     std::uint64_t observed_revision = 0;
 };
 
-class AudioPipeline {
-public:
-    AudioPipeline() = default;
-    ~AudioPipeline() { close(); }
-
-    AudioPipeline(const AudioPipeline&) = delete;
-    AudioPipeline& operator=(const AudioPipeline&) = delete;
-
-    bool open(AVCodecContext* codec, const std::shared_ptr<AudioSink>& sink, float volume, double rate) {
-        close();
-        if (!codec || !sink) return false;
-        codec_ = codec;
-        sink_ = sink;
-        output_rate_ = codec->sample_rate > 0 ? static_cast<std::uint32_t>(codec->sample_rate) : 48000U;
-        output_channels_ = 2;
-        filtered_ = av_frame_alloc();
-        if (!filtered_ || !configure_filter(rate)) {
-            release_graph();
-            sink_.reset();
-            codec_ = nullptr;
-            return false;
-        }
-        if (!sink_->open(static_cast<int>(output_rate_), static_cast<int>(output_channels_))) {
-            release_graph();
-            sink_.reset();
-            codec_ = nullptr;
-            return false;
-        }
-        opened_ = true;
-        sink_->set_volume(volume);
-        return true;
-    }
-
-    void close() {
-        if (opened_ && sink_) sink_->close();
-        opened_ = false;
-        release_graph();
-        sink_.reset();
-        codec_ = nullptr;
-        applied_rate_ = 1.0;
-        wrote_samples_ = false;
-    }
-
-    [[nodiscard]] bool opened() const noexcept { return opened_; }
-    [[nodiscard]] AudioSink* sink() const noexcept { return sink_.get(); }
-    [[nodiscard]] double applied_rate() const noexcept { return applied_rate_; }
-    [[nodiscard]] bool wrote_samples() const noexcept { return wrote_samples_; }
-
-    bool reset_tempo(double rate) {
-        if (!configure_filter(rate)) return false;
-        reset_resampler();
-        if (opened_ && sink_) sink_->flush();
-        wrote_samples_ = false;
-        return true;
-    }
-
-    bool consume(AVFrame* decoded) {
-        if (!source_) return true;
-        if (av_buffersrc_add_frame_flags(source_, decoded, AV_BUFFERSRC_FLAG_KEEP_REF) < 0) return true;
-        while (av_buffersink_get_frame(sink_filter_, filtered_) >= 0) {
-            if (!write_frame(filtered_)) {
-                av_frame_unref(filtered_);
-                return false;
-            }
-            av_frame_unref(filtered_);
-        }
-        return true;
-    }
-
-    void set_volume(float volume) {
-        if (opened_ && sink_) sink_->set_volume(volume);
-    }
-
-private:
-    void release_graph() {
-        swr_free(&resampler_);
-        av_channel_layout_uninit(&resampler_input_layout_);
-        resampler_input_format_ = AV_SAMPLE_FMT_NONE;
-        resampler_input_rate_ = 0;
-        avfilter_graph_free(&graph_);
-        source_ = nullptr;
-        sink_filter_ = nullptr;
-        av_frame_free(&filtered_);
-        output_rate_ = 0;
-        output_channels_ = 0;
-    }
-
-    bool configure_filter(double rate) {
-        avfilter_graph_free(&graph_);
-        source_ = nullptr;
-        sink_filter_ = nullptr;
-        if (!codec_) return false;
-
-        graph_ = avfilter_graph_alloc();
-        if (!graph_) return false;
-
-        char layout[256]{};
-        if (av_channel_layout_describe(&codec_->ch_layout, layout, sizeof(layout)) < 0) return false;
-        const char* sample_format = av_get_sample_fmt_name(codec_->sample_fmt);
-        if (!sample_format) return false;
-
-        char arguments[512]{};
-        std::snprintf(arguments, sizeof(arguments), "time_base=1/%d:sample_rate=%d:sample_fmt=%s:channel_layout=%s",
-                      codec_->sample_rate, codec_->sample_rate, sample_format, layout);
-        const AVFilter* source_filter = avfilter_get_by_name("abuffer");
-        const AVFilter* sink_filter = avfilter_get_by_name("abuffersink");
-        if (!source_filter || !sink_filter ||
-            avfilter_graph_create_filter(&source_, source_filter, "audio_source", arguments, nullptr, graph_) < 0)
-            return false;
-
-        AVFilterContext* previous = source_;
-        double remaining = rate;
-        int index = 0;
-        while (remaining < 0.5 || remaining > 2.0) {
-            const double stage_rate = remaining < 0.5 ? 0.5 : 2.0;
-            remaining /= stage_rate;
-            if (!append_atempo(previous, stage_rate, index++)) return false;
-        }
-        if (!append_atempo(previous, remaining, index)) return false;
-
-        if (avfilter_graph_create_filter(&sink_filter_, sink_filter, "audio_sink", nullptr, nullptr, graph_) < 0 ||
-            avfilter_link(previous, 0, sink_filter_, 0) < 0 || avfilter_graph_config(graph_, nullptr) < 0)
-            return false;
-        applied_rate_ = rate;
-        return true;
-    }
-
-    bool append_atempo(AVFilterContext*& previous, double rate, int index) {
-        AVFilterContext* filter = nullptr;
-        const AVFilter* atempo = avfilter_get_by_name("atempo");
-        if (!atempo) return false;
-        const std::string name = "atempo_" + std::to_string(index);
-        char rate_text[32]{};
-        const auto formatted =
-            std::to_chars(rate_text, rate_text + sizeof(rate_text) - 1, rate, std::chars_format::general, 6);
-        if (formatted.ec != std::errc{}) return false;
-        *formatted.ptr = '\0';
-        const std::string value = std::string("tempo=") + rate_text;
-        if (avfilter_graph_create_filter(&filter, atempo, name.c_str(), value.c_str(), nullptr, graph_) < 0 ||
-            avfilter_link(previous, 0, filter, 0) < 0)
-            return false;
-        previous = filter;
-        return true;
-    }
-
-    void reset_resampler() {
-        swr_free(&resampler_);
-        av_channel_layout_uninit(&resampler_input_layout_);
-        resampler_input_format_ = AV_SAMPLE_FMT_NONE;
-        resampler_input_rate_ = 0;
-    }
-
-    bool configure_resampler(const AVFrame* frame) {
-        const auto input_format = static_cast<AVSampleFormat>(frame->format);
-        const int input_rate = frame->sample_rate > 0 ? frame->sample_rate : codec_->sample_rate;
-        if (input_format == AV_SAMPLE_FMT_NONE || input_rate <= 0 || frame->ch_layout.nb_channels <= 0) return false;
-        if (resampler_ && resampler_input_format_ == input_format && resampler_input_rate_ == input_rate &&
-            av_channel_layout_compare(&resampler_input_layout_, &frame->ch_layout) == 0)
-            return true;
-
-        reset_resampler();
-        AVChannelLayout output_layout = AV_CHANNEL_LAYOUT_STEREO;
-        if (swr_alloc_set_opts2(&resampler_, &output_layout, AV_SAMPLE_FMT_FLT, static_cast<int>(output_rate_),
-                                &frame->ch_layout, input_format, input_rate, 0, nullptr) < 0 ||
-            !resampler_ || swr_init(resampler_) < 0 ||
-            av_channel_layout_copy(&resampler_input_layout_, &frame->ch_layout) < 0) {
-            reset_resampler();
-            return false;
-        }
-        resampler_input_format_ = input_format;
-        resampler_input_rate_ = input_rate;
-        return true;
-    }
-
-    bool write_frame(const AVFrame* frame) {
-        if (!configure_resampler(frame) || !sink_) return false;
-        const auto delay = swr_get_delay(resampler_, resampler_input_rate_);
-        const int capacity = static_cast<int>(
-            av_rescale_rnd(delay + frame->nb_samples, output_rate_, resampler_input_rate_, AV_ROUND_UP));
-        if (capacity <= 0) return false;
-        samples_.resize(static_cast<std::size_t>(capacity) * output_channels_);
-        std::uint8_t* output[] = {reinterpret_cast<std::uint8_t*>(samples_.data())};
-        const int produced = swr_convert(resampler_, output, capacity,
-                                         const_cast<const std::uint8_t**>(frame->extended_data), frame->nb_samples);
-        if (produced > 0) {
-            sink_->write(samples_.data(), static_cast<std::size_t>(produced));
-            wrote_samples_ = true;
-        }
-        return produced >= 0;
-    }
-
-    AVCodecContext* codec_ = nullptr;
-    std::shared_ptr<AudioSink> sink_;
-    bool opened_ = false;
-    SwrContext* resampler_ = nullptr;
-    AVChannelLayout resampler_input_layout_{};
-    AVSampleFormat resampler_input_format_ = AV_SAMPLE_FMT_NONE;
-    int resampler_input_rate_ = 0;
-    AVFilterGraph* graph_ = nullptr;
-    AVFilterContext* source_ = nullptr;
-    AVFilterContext* sink_filter_ = nullptr;
-    AVFrame* filtered_ = nullptr;
-    std::uint32_t output_rate_ = 0;
-    std::uint32_t output_channels_ = 0;
-    double applied_rate_ = 1.0;
-    bool wrote_samples_ = false;
-    std::vector<float> samples_;
-};
-
 } // namespace
 
 struct Player::Impl {
@@ -291,12 +99,18 @@ struct Player::Impl {
     bool open(const Source& source, const Options& requested) {
         close();
         std::unique_lock life(lifecycle_mutex);
+#if defined(__EMSCRIPTEN__)
+        if (source.mode() != SourceMode::File)
+            return fail_open("browser inputs must be downloaded to the virtual filesystem first");
+#endif
         if (source.uri().empty()) return fail_open("source URI is empty");
         {
             std::lock_guard lock(error_mutex);
             error_message.clear();
         }
         loop = requested.loop;
+        gpu_color_conversion = requested.gpu_color_conversion;
+        collect_statistics = requested.collect_statistics;
         audio_clock_media_origin = 0.0;
         audio_epoch_pending = true;
         audio_epoch_anchored = false;
@@ -341,13 +155,17 @@ struct Player::Impl {
 
         if (requested.audio_sink) {
             audio_stream = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, video_stream, nullptr, 0);
+            if (audio_stream < 0 && audio_stream != AVERROR_STREAM_NOT_FOUND && requested.fail_on_audio_error)
+                return fail_open("cannot select audio stream: " + ffmpeg_error(audio_stream));
             decoder_error.clear();
             if (audio_stream >= 0 && !open_decoder(audio_stream, audio_codec, false, decoder_error)) {
+                if (requested.fail_on_audio_error) return fail_open(std::move(decoder_error));
                 avcodec_free_context(&audio_codec);
                 audio_stream = -1;
             }
             if (audio_codec &&
                 !audio.open(audio_codec, requested.audio_sink, volume_value, playback_rate_value.load())) {
+                if (requested.fail_on_audio_error) return fail_open("cannot open audio filter or output sink");
                 avcodec_free_context(&audio_codec);
                 audio_stream = -1;
             }
@@ -442,6 +260,14 @@ struct Player::Impl {
         }
 
         if (hardware) configure_hardware(codec, context);
+#if defined(__EMSCRIPTEN__)
+        context->thread_count = 1;
+        context->max_pixels = maximum_web_pixels;
+        if (static_cast<std::int64_t>(context->width) * context->height > maximum_web_pixels) {
+            error = "video exceeds the browser build's 2073600-pixel limit";
+            return false;
+        }
+#endif
         result = avcodec_open2(context, codec, nullptr);
         if (result < 0 && hardware && hardware_selection.format != AV_PIX_FMT_NONE) {
             av_buffer_unref(&context->hw_device_ctx);
@@ -521,6 +347,8 @@ struct Player::Impl {
             error_message.clear();
         }
         position_value = duration_value = start_time_value = 0.0;
+        decoded_frames = cpu_converted_frames = gpu_prepared_frames = 0;
+        decode_ns = display_ns = 0;
         audio_clock_media_origin = 0.0;
         audio_epoch_pending = true;
         audio_epoch_anchored = false;
@@ -549,8 +377,12 @@ struct Player::Impl {
             latest = {};
         }
         video_stream = audio_stream = -1;
-        clear_held_packets();
+        held_packets.release();
+        prefetch_packet.reset();
+        prefetch_frame.reset();
+        software_frame.reset();
         input_eof = false;
+        audio_exhausted = false;
         hardware_selection.format = AV_PIX_FMT_NONE;
         display.reset();
     }
@@ -568,15 +400,13 @@ struct Player::Impl {
     }
 
     void decode_loop() {
-        AVPacket* packet = av_packet_alloc();
-        AVFrame* decoded = av_frame_alloc();
+        auto packet = make_av_packet();
+        auto decoded = make_av_frame();
         PresentationClock clock;
         clock.observed_revision = presentation_revision.load();
         if (!packet || !decoded) {
             set_error("cannot allocate decode buffers");
             set_state(State::Error);
-            av_frame_free(&decoded);
-            av_packet_free(&packet);
             finish_worker();
             return;
         }
@@ -597,13 +427,13 @@ struct Player::Impl {
             }
             if (state_value != State::Playing) continue;
 
-            const int read_result = read_next_packet(packet);
+            const int read_result = read_next_packet(packet.get());
             if (read_result < 0) {
-                av_packet_unref(packet);
+                av_packet_unref(packet.get());
                 if (stop_requested) break;
                 if (read_result == AVERROR_EXIT || read_result == AVERROR(EAGAIN)) continue;
                 if (read_result == AVERROR_EOF) {
-                    finish_input(decoded, clock);
+                    finish_input(decoded.get(), clock);
                     continue;
                 }
                 set_error("input read failed: " + ffmpeg_error(read_result));
@@ -612,20 +442,29 @@ struct Player::Impl {
             }
 
             if (packet->stream_index == video_stream) {
-                if (avcodec_send_packet(video_codec, packet) >= 0) receive_video(decoded, clock);
+                if (send_video_packet(packet.get()) >= 0) receive_video(decoded.get(), clock);
             } else if (audio_codec && packet->stream_index == audio_stream) {
-                decode_audio(packet, decoded);
+                decode_audio(packet.get(), decoded.get());
             }
-            av_packet_unref(packet);
+            av_packet_unref(packet.get());
         }
-        av_frame_free(&decoded);
-        av_packet_free(&packet);
         finish_worker();
     }
 
     void finish_input(AVFrame* decoded, PresentationClock& clock) {
+        finish_audio(decoded);
+        if (state_value == State::Error) return;
         drain_video(decoded, clock);
-        drain_audio(decoded);
+        if (audio.opened() && !live_value) {
+            // Do not pause or flush a device while its final PCM is still
+            // queued. This also preserves the tail before a looping seek.
+            const double target = audio.written_seconds();
+            while (audio.sink()->clock_seconds() + audio_drain_slack_seconds < target) {
+                std::unique_lock lock(control_mutex);
+                if (stop_requested || seek_request >= 0.0) return;
+                condition.wait_for(lock, audio_drain_poll_interval);
+            }
+        }
         if (stop_requested) return;
         if (seek_pending()) return;
         if (loop && seekable_value) {
@@ -636,60 +475,52 @@ struct Player::Impl {
         if (audio.opened()) audio.sink()->pause(true);
     }
 
-    void clear_held_packets() {
-        for (AVPacket* packet : held_packets) av_packet_free(&packet);
-        held_packets.clear();
-    }
-
     int read_next_packet(AVPacket* packet) {
-        if (!held_packets.empty()) {
-            AVPacket* held = held_packets.front();
-            held_packets.pop_front();
-            av_packet_move_ref(packet, held);
-            av_packet_free(&held);
-            return 0;
-        }
+        if (held_packets.pop(packet)) return 0;
         if (input_eof) return AVERROR_EOF;
         const int result = av_read_frame(format, packet);
         if (result == AVERROR_EOF) input_eof = true;
         return result;
     }
 
-    // Video presentation must not block the only thread that can fill the audio device.
-    // Otherwise a clock that ignores silence never advances, and playback stalls.
+    // Separate reusable scratch storage is required: audio is decoded while
+    // a video frame is still waiting for its presentation deadline.
     bool pump_audio() {
-        if (held_packets.size() >= 64 || input_eof || stop_requested || !audio_codec) return false;
-        AVPacket* packet = av_packet_alloc();
-        AVFrame* decoded = av_frame_alloc();
-        if (!packet || !decoded) {
-            av_packet_free(&packet);
-            av_frame_free(&decoded);
+        if (held_packets.full() || input_eof || stop_requested || !audio_codec) return false;
+        if (!prefetch_packet) prefetch_packet = make_av_packet();
+        if (!prefetch_frame) prefetch_frame = make_av_frame();
+        if (!prefetch_packet || !prefetch_frame) {
+            set_error("cannot allocate audio prefetch buffers");
+            set_state(State::Error);
             return false;
         }
+        auto* packet = prefetch_packet.get();
+        auto* decoded = prefetch_frame.get();
         bool wrote = false;
-        while (held_packets.size() < 64 && !stop_requested && !input_eof) {
+        while (!held_packets.full() && !stop_requested && !input_eof) {
             const int result = av_read_frame(format, packet);
             if (result == AVERROR_EOF) {
                 input_eof = true;
+                finish_audio(decoded);
                 break;
             }
             if (result < 0) break;
             if (packet->stream_index == audio_stream) {
                 decode_audio(packet, decoded);
-                av_packet_unref(packet);
                 wrote = true;
                 break;
             }
-            AVPacket* held = av_packet_alloc();
-            if (!held) {
-                av_packet_unref(packet);
+            // Streams which the player does not consume need not occupy the
+            // bounded video queue (subtitles/attachments/alternate tracks).
+            if (packet->stream_index == video_stream && !held_packets.push(packet)) {
+                set_error("cannot buffer video packet");
+                set_state(State::Error);
                 break;
             }
-            av_packet_move_ref(held, packet);
-            held_packets.push_back(held);
+            av_packet_unref(packet);
         }
-        av_frame_free(&decoded);
-        av_packet_free(&packet);
+        av_frame_unref(decoded);
+        av_packet_unref(packet);
         return wrote;
     }
 
@@ -719,8 +550,9 @@ struct Player::Impl {
             }
         }
         if (ok) {
-            clear_held_packets();
+            held_packets.clear();
             input_eof = false;
+            audio_exhausted = false;
             position_value = relative;
             audio_clock_media_origin = relative;
             audio_epoch_pending = true;
@@ -741,8 +573,28 @@ struct Player::Impl {
         return ok;
     }
 
+    int send_video_packet(const AVPacket* packet) {
+        const auto started =
+            collect_statistics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        const int result = avcodec_send_packet(video_codec, packet);
+        if (collect_statistics)
+            decode_ns.fetch_add(static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started)
+                    .count()));
+        return result;
+    }
+
     void receive_video(AVFrame* decoded, PresentationClock& clock) {
-        while (avcodec_receive_frame(video_codec, decoded) >= 0) {
+        for (;;) {
+            const auto started =
+                collect_statistics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+            const int result = avcodec_receive_frame(video_codec, decoded);
+            if (collect_statistics)
+                decode_ns.fetch_add(static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started)
+                        .count()));
+            if (result < 0) break;
+            if (collect_statistics) ++decoded_frames;
             const bool keep_going = present_video_frame(decoded, clock);
             av_frame_unref(decoded);
             if (!keep_going) break;
@@ -750,7 +602,7 @@ struct Player::Impl {
     }
 
     void drain_video(AVFrame* decoded, PresentationClock& clock) {
-        if (!video_codec || avcodec_send_packet(video_codec, nullptr) < 0) return;
+        if (!video_codec || send_video_packet(nullptr) < 0) return;
         receive_video(decoded, clock);
     }
 
@@ -761,6 +613,16 @@ struct Player::Impl {
             av_frame_unref(decoded);
             if (state_value == State::Error) return;
         }
+    }
+
+    void finish_audio(AVFrame* decoded) {
+        if (audio_exhausted || !audio_codec) return;
+        drain_audio(decoded);
+        if (audio.opened() && !audio.drain()) {
+            set_error("cannot drain audio at end of input");
+            set_state(State::Error);
+        }
+        audio_exhausted = true;
     }
 
     bool present_video_frame(AVFrame* decoded, PresentationClock& clock) {
@@ -780,7 +642,9 @@ struct Player::Impl {
     bool wait_until_due(PresentationClock& clock, double seconds) {
         std::unique_lock lock(control_mutex);
         if (stop_requested || seek_request >= 0.0) return false;
-        const bool master_audio = audio.opened() && !live_value;
+        const bool master_audio =
+            audio.opened() && !live_value &&
+            !(audio_exhausted && audio.sink()->clock_seconds() + audio_drain_slack_seconds >= audio.written_seconds());
         const double relative = relative_media_seconds(seconds);
         const auto blocked = [this] {
             return stop_requested.load() || state_value.load() != State::Playing || seek_request >= 0.0;
@@ -802,8 +666,6 @@ struct Player::Impl {
                 clock.origin_set = true;
             }
             const double rate = std::max(playback_rate_value.load(), minimum_speed);
-            const auto delay = std::chrono::duration<double>((seconds - clock.media_origin) / rate);
-            const auto due = clock.origin + std::chrono::duration_cast<std::chrono::steady_clock::duration>(delay);
             if (master_audio) {
                 while (!blocked() && presentation_revision.load() == revision) {
                     lock.unlock();
@@ -813,15 +675,51 @@ struct Player::Impl {
                     if (blocked() || presentation_revision.load() != revision) break;
                     const double played = audio_clock_media_origin +
                                           audio.sink()->clock_seconds() * std::max(audio.applied_rate(), minimum_speed);
-                    if (played + 0.04 >= relative) break;
+                    if (played + audio_sync_lead_seconds >= relative) break;
+                    if (audio_exhausted &&
+                        audio.sink()->clock_seconds() + audio_drain_slack_seconds >= audio.written_seconds()) {
+                        // Audio can end before the video or a tempo filter can
+                        // emit fewer samples than the remaining video spans.
+                        break;
+                    }
                     lock.unlock();
                     const bool wrote_audio = pump_audio();
                     lock.lock();
                     if (stop_requested || seek_request >= 0.0) return false;
                     if (!wrote_audio)
-                        condition.wait_for(lock, std::chrono::milliseconds(10), [this, revision, &blocked] {
+                        condition.wait_for(lock, audio_clock_poll_interval, [this, revision, &blocked] {
                             return blocked() || presentation_revision.load() != revision;
                         });
+                }
+            }
+            // A device consumes audio in blocks. Releasing video immediately
+            // when a block crosses the audio threshold produces alternating
+            // short/long frame intervals. Keep a steady cadence as well as
+            // honoring the audio master, including after a clock re-anchor.
+            const auto paced_delay = std::chrono::duration<double>((seconds - clock.media_origin) / rate);
+            const auto due =
+                clock.origin + std::chrono::duration_cast<std::chrono::steady_clock::duration>(paced_delay);
+            const bool catch_up =
+                master_audio && relative + maximum_video_lag_seconds <
+                                    audio_clock_media_origin + audio.sink()->clock_seconds() * audio.applied_rate();
+            if (catch_up || (master_audio && std::chrono::steady_clock::now() > due + video_reanchor_lag)) {
+                clock.origin = std::chrono::steady_clock::now();
+                clock.media_origin = seconds;
+            } else if (master_audio) {
+                while (!blocked() && presentation_revision.load() == revision &&
+                       std::chrono::steady_clock::now() < due) {
+                    // Waiting for video must not starve the same thread's
+                    // audio producer. Maintain a short, bounded PCM lead.
+                    if (!audio_exhausted &&
+                        audio.written_seconds() - audio.sink()->clock_seconds() < audio_prefetch_lead_seconds) {
+                        lock.unlock();
+                        const bool wrote_audio = pump_audio();
+                        lock.lock();
+                        if (wrote_audio) continue;
+                    }
+                    condition.wait_until(
+                        lock, std::min(due, std::chrono::steady_clock::now() + audio_clock_poll_interval),
+                        [this, revision, &blocked] { return blocked() || presentation_revision.load() != revision; });
                 }
             } else {
                 condition.wait_until(lock, due, [this, revision, &blocked] {
@@ -847,28 +745,42 @@ struct Player::Impl {
     }
 
     void publish_frame(AVFrame* decoded) {
-        AVFrame* software = nullptr;
+        const auto started =
+            collect_statistics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         AVFrame* source = decoded;
         const auto pixel_format = static_cast<AVPixelFormat>(decoded->format);
         const AVPixFmtDescriptor* descriptor = av_pix_fmt_desc_get(pixel_format);
         if (descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_HWACCEL) != 0) {
-            software = av_frame_alloc();
-            if (!software || av_hwframe_transfer_data(software, decoded, 0) < 0) {
-                av_frame_free(&software);
+            if (!software_frame) software_frame = make_av_frame();
+            if (!software_frame) return;
+            av_frame_unref(software_frame.get());
+            if (av_hwframe_transfer_data(software_frame.get(), decoded, 0) < 0 ||
+                av_frame_copy_props(software_frame.get(), decoded) < 0)
                 return;
-            }
-            // Transfer copies pixels, not the decoded frame's display/color metadata.
-            if (av_frame_copy_props(software, decoded) < 0) {
-                av_frame_free(&software);
-                return;
-            }
-            source = software;
+            source = software_frame.get();
         }
-        AVFrame* display = this->display.convert(source, format->streams[video_stream]);
-        av_frame_free(&software);
+        DisplayGeometry geometry;
+        AVFrame* display =
+            this->display.convert(source, format->streams[video_stream], gpu_color_conversion, &geometry);
+        if (source != decoded) av_frame_unref(software_frame.get());
+#if defined(__EMSCRIPTEN__)
+        if (!display) {
+            set_error("cannot convert video within the browser display limits");
+            set_state(State::Error);
+        }
+#endif
         if (!display) return;
+        if (collect_statistics) {
+            display_ns.fetch_add(static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started)
+                    .count()));
+            if (display->format == AV_PIX_FMT_RGBA)
+                ++cpu_converted_frames;
+            else
+                ++gpu_prepared_frames;
+        }
         Frame next;
-        next.impl_ = std::make_shared<Frame::Impl>(display, decoded->best_effort_timestamp);
+        next.impl_ = std::make_shared<Frame::Impl>(display, decoded->best_effort_timestamp, geometry);
         std::lock_guard lock(frame_mutex);
         latest = std::move(next);
     }
@@ -933,8 +845,8 @@ struct Player::Impl {
             if (audio_epoch_pending && !audio.wrote_samples()) return true;
             const double played = audio_clock_media_origin +
                                   audio.sink()->clock_seconds() * std::max(audio.applied_rate(), minimum_speed);
-            if (relative <= played + 0.5) return true;
-            condition.wait_for(lock, std::chrono::milliseconds(10), blocked);
+            if (relative <= played + maximum_audio_lead_seconds) return true;
+            condition.wait_for(lock, audio_lead_poll_interval, blocked);
         }
         return !stop_requested && seek_request < 0.0;
     }
@@ -991,6 +903,13 @@ struct Player::Impl {
     AudioPipeline audio;
     DisplayConverter display;
     bool loop = false;
+    bool gpu_color_conversion = false;
+    bool collect_statistics = false;
+    std::atomic<std::uint64_t> decoded_frames{0};
+    std::atomic<std::uint64_t> cpu_converted_frames{0};
+    std::atomic<std::uint64_t> gpu_prepared_frames{0};
+    std::atomic<std::uint64_t> decode_ns{0};
+    std::atomic<std::uint64_t> display_ns{0};
     std::thread worker;
     std::condition_variable condition;
     std::mutex lifecycle_mutex;
@@ -1021,8 +940,12 @@ struct Player::Impl {
     double audio_clock_media_origin = 0.0;
     bool audio_epoch_pending = true;
     bool audio_epoch_anchored = false;
-    std::deque<AVPacket*> held_packets;
+    PacketQueue held_packets;
+    AvPacketPtr prefetch_packet;
+    AvFramePtr prefetch_frame;
+    AvFramePtr software_frame;
     bool input_eof = false;
+    bool audio_exhausted = false;
 };
 
 Player::Player() : impl_(std::make_unique<Impl>()) {}
@@ -1107,7 +1030,7 @@ Frame Player::frame() const {
     return impl_->latest;
 }
 void Player::set_volume(float volume) {
-    impl_->volume_value = std::clamp(volume, 0.0F, 1.0F);
+    impl_->volume_value = std::isnan(volume) ? 0.0F : std::clamp(volume, 0.0F, 1.0F);
     impl_->audio.set_volume(impl_->volume_value);
 }
 float Player::volume() const noexcept { return impl_->volume_value.load(); }
@@ -1115,6 +1038,12 @@ bool Player::audio_enabled() const noexcept { return impl_->audio_codec != nullp
 std::string Player::error() const {
     std::lock_guard lock(impl_->error_mutex);
     return impl_->error_message;
+}
+
+PlaybackStatistics Player::statistics() const noexcept {
+    return {impl_->decoded_frames.load(), impl_->cpu_converted_frames.load(), impl_->gpu_prepared_frames.load(),
+            static_cast<double>(impl_->decode_ns.load()) / 1000000.0,
+            static_cast<double>(impl_->display_ns.load()) / 1000000.0};
 }
 
 } // namespace imvideo

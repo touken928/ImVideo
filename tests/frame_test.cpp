@@ -1,4 +1,5 @@
 #include <imvideo/frame.hpp>
+#include <imvideo/renderer.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,4 +18,17 @@ TEST_CASE("Empty frames remain empty when copied", "[frame]") {
 
     REQUIRE_FALSE(original);
     REQUIRE_FALSE(copy);
+    REQUIRE(original == copy);
+    REQUIRE_FALSE(original != copy);
+}
+
+TEST_CASE("Renderer invalidation is safe without a graphics context", "[renderer]") {
+    imvideo::Renderer renderer;
+    renderer.invalidate();
+    renderer.invalidate();
+
+    REQUIRE(renderer.texture() == 0);
+    REQUIRE(renderer.width() == 0);
+    REQUIRE(renderer.height() == 0);
+    REQUIRE_FALSE(renderer.update({}));
 }

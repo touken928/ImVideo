@@ -32,7 +32,7 @@ Build the packaged example from `example/implayer/` using the commands in `READM
 
 ## Coding Style & Naming Conventions
 
-Use four-space indentation and C++17. Follow the existing style: `PascalCase` for types, `snake_case` for functions and variables, and trailing underscores for private data members. Keep braces on the declaration line and prefer RAII, `std::unique_ptr`, and `std::shared_ptr` over manual ownership. No formatter is configured; run `git diff --check` before committing.
+Use four-space indentation and C++17. Follow the existing style: `PascalCase` for types, `snake_case` for functions and variables, and trailing underscores for private data members. Keep braces on the declaration line and prefer RAII, `std::unique_ptr`, and `std::shared_ptr` over manual ownership. Use `.clang-format` with clang-format 22.1.8: `python tools/format.py --write` applies the style and `python tools/format.py` checks it. Run `git diff --check` before committing.
 
 ## Testing Guidelines
 

@@ -96,7 +96,7 @@ class RecordingAudioSink final : public imvideo::AudioSink {
 public:
     bool open(int, int) override {
         ++open_calls;
-        return true;
+        return accept_open;
     }
     void close() override { ++close_calls; }
     void write(const float*, std::size_t) override { ++write_calls; }
@@ -106,6 +106,7 @@ public:
     [[nodiscard]] double clock_seconds() const noexcept override { return 0.0; }
 
     std::atomic<int> open_calls{0};
+    bool accept_open = true;
     std::atomic<int> close_calls{0};
     std::atomic<int> write_calls{0};
     std::atomic<int> pause_calls{0};
@@ -195,6 +196,9 @@ TEST_CASE("Player decodes a local image and retains the frame", "[player][decode
     REQUIRE(wait_until([&player] { return static_cast<bool>(player.frame()); }));
 
     const auto retained = player.frame();
+    const auto copied = retained;
+    REQUIRE(retained == copied);
+    REQUIRE(retained != imvideo::Frame{});
     REQUIRE(retained.width() == 8);
     REQUIRE(retained.height() == 8);
     const auto retained_pts = retained.pts();
@@ -206,6 +210,10 @@ TEST_CASE("Player decodes a local image and retains the frame", "[player][decode
     REQUIRE(retained.width() == 8);
     REQUIRE(retained.height() == 8);
     REQUIRE(retained.pts() == retained_pts);
+
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_IMAGE)));
+    REQUIRE(wait_until([&player] { return static_cast<bool>(player.frame()); }));
+    REQUIRE(retained != player.frame());
 }
 
 TEST_CASE("A video-only source does not open an audio sink", "[player][audio]") {
@@ -227,6 +235,28 @@ TEST_CASE("A video-only source does not open an audio sink", "[player][audio]") 
     REQUIRE(sink->pause_calls == 0);
     REQUIRE(sink->flush_calls == 0);
     REQUIRE(sink->volume_calls == 0);
+}
+
+TEST_CASE("Audio output failures can be reported instead of playing silently", "[player][audio]") {
+    auto sink = std::make_shared<RecordingAudioSink>();
+    sink->accept_open = false;
+    imvideo::Options options;
+    options.audio_sink = sink;
+    options.autoplay = false;
+    imvideo::Player player;
+
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP), options));
+    REQUIRE_FALSE(player.audio_enabled());
+    player.close();
+
+    options.fail_on_audio_error = true;
+    REQUIRE_FALSE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP), options));
+    REQUIRE(player.state() == imvideo::State::Error);
+    REQUIRE(player.error().find("audio") != std::string::npos);
+    player.close();
+
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_WIDE), options));
+    REQUIRE_FALSE(player.audio_enabled());
 }
 
 TEST_CASE("Playback speed follows source capabilities and limits", "[player][speed]") {
@@ -416,6 +446,41 @@ TEST_CASE("An audio sink receives samples from a clip", "[player][audio]") {
     REQUIRE(sink->close_calls.load() == 1);
 }
 
+TEST_CASE("Audio filters and queued samples drain before playback ends", "[player][audio][sync]") {
+    auto sink = std::make_shared<ControlledAudioSink>();
+    imvideo::Options options;
+    options.audio_sink = sink;
+    imvideo::Player player;
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP), options));
+    REQUIRE(wait_until([&] {
+        sink->consume_written_samples();
+        return player.state() == imvideo::State::Ended;
+    }));
+    REQUIRE(sink->written_seconds() > 1.95);
+    REQUIRE(player.error().empty());
+}
+
+TEST_CASE("Audio tempo tails do not stall video near end of input", "[player][audio][speed][sync]") {
+    for (const bool loop : {false, true}) {
+        auto sink = std::make_shared<ControlledAudioSink>();
+        imvideo::Options options;
+        options.audio_sink = sink;
+        options.autoplay = false;
+        options.loop = loop;
+        imvideo::Player player;
+        REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP), options));
+        REQUIRE(player.seek(1.8));
+        REQUIRE(player.set_speed(4.0));
+        player.play();
+        REQUIRE(wait_until([&] {
+            sink->consume_written_samples();
+            return loop ? player.position() < 0.6 : player.state() == imvideo::State::Ended;
+        }));
+        REQUIRE(player.error().empty());
+        player.close();
+    }
+}
+
 TEST_CASE("Video does not run ahead of a stalled audio clock", "[player][sync]") {
     auto sink = std::make_shared<RecordingAudioSink>();
     imvideo::Options options;
@@ -529,4 +594,31 @@ TEST_CASE("Player can reopen a source after closing", "[player][lifecycle]") {
     REQUIRE(wait_until([&player] { return static_cast<bool>(player.frame()); }));
     player.close();
     REQUIRE(player.state() == imvideo::State::Idle);
+}
+
+TEST_CASE("Playback statistics are opt-in and reset on close", "[player][display]") {
+    imvideo::Player player;
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP)));
+    REQUIRE(wait_until([&] { return static_cast<bool>(player.frame()); }));
+    REQUIRE(player.statistics().decoded_frames == 0);
+    player.close();
+
+    imvideo::Options options;
+    options.collect_statistics = true;
+    options.gpu_color_conversion = true; // Native consumers retain CPU conversion.
+    REQUIRE(player.open(imvideo::Source::file(IMVIDEO_TEST_CLIP), options));
+    REQUIRE(wait_until([&] { return player.statistics().cpu_converted_frames > 1; }));
+    player.pause();
+    const auto stats = player.statistics();
+    REQUIRE(stats.decoded_frames >= stats.cpu_converted_frames);
+    REQUIRE(stats.gpu_prepared_frames == 0);
+    REQUIRE(stats.decode_ms > 0.0);
+    REQUIRE(stats.display_ms > 0.0);
+    const auto retained = player.frame();
+    player.close();
+    REQUIRE(player.statistics().decoded_frames == 0);
+    REQUIRE(player.statistics().display_ms == 0.0);
+    // Pool destruction must not invalidate frames retained by a consumer.
+    REQUIRE(retained.width() > 0);
+    REQUIRE(retained.height() > 0);
 }

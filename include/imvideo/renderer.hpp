@@ -18,6 +18,9 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     bool update(const Frame& frame);
+    // Forget resources after context loss, without making GL calls. The next
+    // update() recreates the texture. Do not use to release a live context's texture.
+    void invalidate() noexcept;
     // update() requires a current OpenGL context with pixel-unpack-buffer support.
     // Describe the most recent successful update. On failure these values remain unchanged,
     // though OpenGL may have partially modified the texture image.

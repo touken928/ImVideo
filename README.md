@@ -20,6 +20,9 @@ exposes decoded video through a small pipeline:
 Source -> Player -> Frame -> Renderer -> OpenGL texture
 ```
 
+See the [architecture notes](docs/architecture.md) for module responsibilities,
+thread ownership, bounded queues, hot paths and verification commands.
+
 The library uses OpenGL for rendering. It does not depend on a window toolkit;
 the host may use GLFW, SDL3, Qt, or another OpenGL context provider.
 
@@ -35,6 +38,13 @@ conan create . -s build_type=Release -b missing
 The recipe creates `imvideo/x.y.z`. Consumers use the normal Conan CMake flow
 and link `imvideo::imvideo` after `find_package(imvideo CONFIG REQUIRED)`.
 
+## WebAssembly (experimental)
+
+The core library supports Emscripten, pthreads and WebGL 2. The
+[WebAssembly build and host requirements](docs/wasm-design.md) cover the
+cross-compilation profile, virtual filesystem inputs, rendering and caller-owned
+audio integration. Applications provide their own browser host.
+
 ## Code formatting
 
 The project is formatted with clang-format 22.1.8. Install the pinned version
@@ -42,11 +52,13 @@ and format every tracked C/C++ source and header before submitting changes:
 
 ```sh
 python -m pip install "clang-format==22.1.8"
-git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' '*.hxx' \
-  | xargs -0 clang-format -i
+python tools/format.py --write
+python tools/format.py
 ```
 
-GitHub Actions runs the same version in check-only mode on every push.
+The script includes core, tests and the desktop example, including newly created
+files, and excludes build/dependency caches. Use `--clang-format /path/to/clang-format`
+to select a binary. GitHub Actions runs the same check on every push.
 
 ## Build the example through the package
 
@@ -121,12 +133,24 @@ The core package does not depend on Dear ImGui. `Renderer::texture()` returns a
 `std::uintptr_t` containing the OpenGL texture name. The application converts it
 to its UI toolkit's texture type at the call site, as shown above.
 
+For Emscripten, `Options::gpu_color_conversion` optionally retains supported
+YUV planes for GPU color conversion and rotation.
+Renderer still returns an RGBA texture, and unsupported inputs use CPU
+conversion. `Options::collect_statistics` enables per-session decode/display
+CPU timings through `Player::statistics()`. Both options default to false.
+
 The core package also has no audio-device dependency. Applications optionally
 implement `imvideo::AudioSink` and assign a `std::shared_ptr` to
 `Options::audio_sink`; the `implayer` example supplies `MiniaudioSink`. Leave
 `audio_sink` empty for silent previews or multi-camera RTSP walls. In that mode
 no audio decoder or resampler is created. `Player` retains the sink until its
 decode thread has stopped, and `set_volume()` forwards volume to the sink.
+
+Set `Options::fail_on_audio_error` to report audio decoder or device failures
+instead of falling back to silent playback; inputs without an audio stream are
+still accepted. `AudioSink::drain()` optionally emits samples held by a sink-side
+converter at end of input. Player drains its filters and waits for queued audio
+to be consumed before ending non-live playback or looping.
 
 `Player::set_speed()` accepts speeds from `0.25x` through `4.0x` for
 seekable, non-live inputs. Video presentation timing is scaled and audio is
