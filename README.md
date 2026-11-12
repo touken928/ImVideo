@@ -44,6 +44,8 @@ The core library supports Emscripten, pthreads and WebGL 2. The
 [WebAssembly build and host requirements](docs/wasm-design.md) cover the
 cross-compilation profile, virtual filesystem inputs, rendering and caller-owned
 audio integration. Applications provide their own browser host.
+GitHub Actions also builds the WASM package and runs the installed-package
+consumer in Chromium. See the [WASM test commands](docs/wasm-design.md#构建与运行测试).
 
 ## Code formatting
 

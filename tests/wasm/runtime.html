@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>imvideo WASM tests</title>
+<canvas id="canvas" width="320" height="240"></canvas>
+<script>
+    window.wasmTestResults = [];
+    var Module = {
+        canvas: document.querySelector("#canvas"),
+        onAbort(reason) { window.wasmTestFailure = String(reason); }
+    };
+</script>
+<script src="wasm_tests.js"></script>

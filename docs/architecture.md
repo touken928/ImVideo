@@ -65,3 +65,7 @@ Native CTest covers queue ordering/overflow/reference release, PCM preservation,
 normal-rate resampler tails, and the public playback lifecycle. Native package
 creation passed 38 tests. The packaged desktop example is a separate build
 regression check.
+
+The separate `tests/wasm` consumer links the installed CMake exports and runs
+in headless Chromium on CI. It covers decoding, PCM audio, controls, rendering,
+host GL state and context recovery; see the [WASM testing instructions](wasm-design.md).

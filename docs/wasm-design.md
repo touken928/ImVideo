@@ -18,7 +18,37 @@ conan create . -pr:b default -pr:h profiles/emscripten -b missing
 线程池、内存预算、虚拟文件系统导出及自己的 JS 绑定。所有依赖使用相同 SDK 和线程 ABI。
 
 该 profile 设置 `tools.build:skip_test=True`；原生 CTest 不能在交叉编译目标上执行。
-跳过原生测试不等于验证了浏览器运行时，应用需要自行验证其浏览器宿主。
+浏览器运行验证由独立的 WASM CI 任务完成。
+
+## 构建与运行测试
+
+GitHub Actions 的 `Build and test imvideo (WASM)` 任务独立于原生构建，使用固定的
+SDK 和 Playwright Chromium。验证顺序为：创建静态包，编译安装后包的消费者，再在
+有跨源隔离响应头的本地 HTTP 服务中运行浏览器测试。发布任务也等待这项检查通过。
+
+`tests/wasm/` 是测试消费者，不包含播放器示例界面。它通过包内的 CMake 导出文件链接
+`imvideo::imvideo`，不直接编译核心源文件，也不依赖桌面 OpenGL。
+
+完成上面的包构建后，可在仓库根目录复现：
+
+```sh
+conan test tests/wasm imvideo/0.2.0 -pr:b default -pr:h profiles/emscripten
+python -m pip install -r tests/wasm/requirements.txt
+python -m playwright install --with-deps chromium
+python tests/wasm/run.py build/wasm-tests --results build/wasm-results
+```
+
+`conan test` 在此交叉编译配置下只负责构建消费者；必须再执行浏览器测试命令才能验证
+运行结果。消费者产物集中在 `build/wasm-tests/`，不写入示例目录。
+已有 Chrome 可通过 `--chrome /path/to/chrome` 指定。
+
+浏览器测试覆盖五组场景：API 默认状态、虚拟文件和不支持的传输；CPU/GPU 像素、
+GL 状态恢复、SAR 与旋转；音频 PCM、暂停/seek/变速、EOF 排空和重开；循环播放；
+WebGL context 丢失恢复。测试使用现有本地 fixtures 和计数式 `AudioSink`，验证音频
+解码和样本传递，不连接实际音频设备。应用自身的 Web Audio 适配仍由宿主验证。
+
+CI 上传 JSON 结果、浏览器日志、失败截图以及测试消费者的 JS/WASM/data 产物，
+保留 14 天。FFmpeg 的 WASM 依赖使用独立 Conan 缓存，避免混用原生缓存。
 
 ## 输入与线程
 

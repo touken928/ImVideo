@@ -43,7 +43,9 @@ class ImvideoConan(ConanFile):
         "ffmpeg/*:with_soxr": False,
         "ffmpeg/*:disable_all_encoders": True,
     }
-    exports_sources = "CMakeLists.txt", "cmake/*", "include/*", "src/*", "tests/*", "LICENSE"
+    exports_sources = (
+        "CMakeLists.txt", "cmake/*", "include/*", "src/*", "tests/*", "!tests/wasm/*", "LICENSE"
+    )
 
     def requirements(self):
         self.requires("ffmpeg/7.1.5")

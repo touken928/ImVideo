@@ -15,6 +15,7 @@ env:
   CLANG_FORMAT_VERSION: "22.1.8"
   CONAN_VERSION: "2.31.1"
   CONAN_HOME: ${{ github.workspace }}/.conan2
+  EMSDK_VERSION: "4.0.10"
 
 jobs:
   format:
@@ -203,10 +204,91 @@ jobs:
           path: ${{ env.CONAN_HOME }}/p
           key: ${{ steps.conan_cache_key.outputs.value }}
 
+  wasm:
+    name: Build and test imvideo (WASM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Check out SDK installer
+        uses: actions/checkout@v6
+        with:
+          repository: emscripten-core/emsdk
+          ref: 1693ce7359fc9694f198694f902a2cc061239b86
+          path: build/emsdk
+          persist-credentials: false
+
+      - name: Install Emscripten
+        run: |
+          build/emsdk/emsdk install "$EMSDK_VERSION"
+          build/emsdk/emsdk activate "$EMSDK_VERSION"
+
+      - name: Install build and browser tools
+        run: |
+          python -m pip install "conan==${{ env.CONAN_VERSION }}" cmake ninja -r tests/wasm/requirements.txt
+          python -m playwright install --with-deps chromium
+          conan profile detect --force
+
+      - name: Restore WASM Conan cache
+        id: wasm_cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CONAN_HOME }}/p
+          key: conan-wasm-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.CONAN_VERSION }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('conanfile.py', 'profiles/emscripten') }}
+          restore-keys: |
+            conan-wasm-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.CONAN_VERSION }}-${{ env.EMSDK_VERSION }}-
+
+      - name: Build and package WASM library
+        shell: bash
+        run: |
+          source build/emsdk/emsdk_env.sh
+          conan create . -pr:b default -pr:h profiles/emscripten -b missing --options "*:shared=False"
+
+      - name: Build installed-package consumer
+        shell: bash
+        run: |
+          source build/emsdk/emsdk_env.sh
+          package_reference="$(conan inspect . --format=json | python -c 'import json, sys; print("{name}/{version}".format(**json.load(sys.stdin)))')"
+          conan test tests/wasm "$package_reference" -pr:b default -pr:h profiles/emscripten
+
+      - name: Run browser integration tests
+        run: python tests/wasm/run.py build/wasm-tests --results build/wasm-results
+
+      - name: Upload WASM test artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-test-results
+          path: |
+            build/wasm-results/
+            build/wasm-tests/runtime.html
+            build/wasm-tests/wasm_tests.*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Prune disposable WASM cache data
+        if: always() && steps.wasm_cache.outcome == 'success'
+        run: conan cache clean "*" --source --build --download --temp
+
+      - name: Save WASM Conan cache
+        if: always() && steps.wasm_cache.outcome == 'success' && steps.wasm_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CONAN_HOME }}/p
+          key: conan-wasm-v1-${{ runner.os }}-${{ runner.arch }}-${{ env.CONAN_VERSION }}-${{ env.EMSDK_VERSION }}-${{ hashFiles('conanfile.py', 'profiles/emscripten') }}
+
   release:
     name: Publish Windows implayer
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [format, build]
+    needs: [format, build, wasm]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
