@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstdio>
 #include <limits>
+#include <string>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
